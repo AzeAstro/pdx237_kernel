@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -25,7 +25,7 @@
 #include "camera_main.h"
 
 static struct cam_custom_dev g_custom_dev;
-static uint32_t g_num_custom_hws;
+static uint32_t cam_num_custom;
 
 static void cam_custom_dev_iommu_fault_handler(
 	struct cam_smmu_pf_info *pf_info)
@@ -175,12 +175,12 @@ err:
 	return rc;
 }
 
-void cam_custom_get_num_hws(uint32_t *custom_num)
+void cam_custom_get_num_custom(uint32_t *custom_num)
 {
 	if (custom_num)
-		*custom_num = g_num_custom_hws;
+		*custom_num = cam_num_custom;
 	else
-		CAM_ERR(CAM_CUSTOM, "Invalid argument, g_num_custom_hws: %u", g_num_custom_hws);
+		CAM_ERR(CAM_CUSTOM, "Failed to update number of custom");
 }
 
 static void cam_custom_component_unbind(struct device *dev,
@@ -220,7 +220,7 @@ static int cam_custom_dev_probe(struct platform_device *pdev)
 	int rc = 0;
 
 	CAM_DBG(CAM_CUSTOM, "Adding Custom HW component");
-	g_num_custom_hws++;
+	cam_num_custom++;
 
 	rc = component_add(&pdev->dev, &cam_custom_component_ops);
 	if (rc)

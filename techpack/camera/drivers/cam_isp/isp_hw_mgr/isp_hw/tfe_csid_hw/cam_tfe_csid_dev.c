@@ -7,13 +7,13 @@
 #include <linux/slab.h>
 #include <linux/mod_devicetable.h>
 #include <linux/of_device.h>
+#include <dt-bindings/msm-camera.h>
 #include "cam_tfe_csid_core.h"
 #include "cam_tfe_csid_dev.h"
 #include "cam_tfe_csid_hw_intf.h"
 #include "cam_debug_util.h"
-#include "cam_cpas_api.h"
 #include "camera_main.h"
-#include <dt-bindings/msm-camera.h>
+#include "cam_cpas_api.h"
 
 static struct cam_hw_intf *cam_tfe_csid_hw_list[CAM_TFE_CSID_HW_NUM_MAX] = {
 	0, 0, 0};
@@ -40,7 +40,8 @@ static int cam_tfe_csid_component_bind(struct device *dev,
 		goto err;
 	}
 
-	if (!cam_cpas_is_feature_supported(CAM_CPAS_ISP_FUSE, BIT(csid_dev_idx), NULL)) {
+	if (!cam_cpas_is_feature_supported(CAM_CPAS_ISP_FUSE, BIT(csid_dev_idx), NULL) ||
+		!cam_cpas_is_feature_supported(CAM_CPAS_ISP_LITE_FUSE, BIT(csid_dev_idx), NULL)) {
 		CAM_DBG(CAM_ISP, "CSID[%d] not supported based on fuse", csid_dev_idx);
 		goto err;
 	}

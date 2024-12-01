@@ -20,8 +20,8 @@
 #include "cam_subdev.h"
 #include "cam_cpas_hw_intf.h"
 #include "cam_cpas_soc.h"
-#include "cam_cpastop_hw.h"
 #include "camera_main.h"
+#include "cam_cpastop_hw.h"
 
 #define CAM_CPAS_DEV_NAME    "cam-cpas"
 #define CAM_CPAS_INTF_INITIALIZED() (g_cpas_intf && g_cpas_intf->probe_done)
@@ -145,6 +145,100 @@ const char *cam_cpas_axi_util_trans_type_to_string(
 }
 EXPORT_SYMBOL(cam_cpas_axi_util_trans_type_to_string);
 
+const char *cam_cpas_axi_util_drv_vote_lvl_to_string(
+	uint32_t vote_lvl)
+{
+	switch (vote_lvl) {
+	case CAM_CPAS_VOTE_LEVEL_LOW:
+		return "VOTE_LVL_LOW";
+	case CAM_CPAS_VOTE_LEVEL_HIGH:
+		return "VOTE_LVL_HIGH";
+	default:
+		return "VOTE_LVL_INVALID";
+	}
+}
+EXPORT_SYMBOL(cam_cpas_axi_util_drv_vote_lvl_to_string);
+
+int cam_cpas_query_drv_enable(bool *is_drv_enabled)
+{
+	struct cam_hw_info *cpas_hw = NULL;
+	struct cam_cpas_private_soc *soc_private = NULL;
+
+	if (!CAM_CPAS_INTF_INITIALIZED()) {
+		CAM_ERR(CAM_CPAS, "cpas intf not initialized");
+		return -ENODEV;
+	}
+
+	if (!is_drv_enabled) {
+		CAM_ERR(CAM_CPAS, "invalid input %pK", is_drv_enabled);
+		return -EINVAL;
+	}
+
+	cpas_hw = (struct cam_hw_info  *) g_cpas_intf->hw_intf->hw_priv;
+	soc_private = (struct cam_cpas_private_soc *) cpas_hw->soc_info.soc_private;
+
+	*is_drv_enabled = soc_private->enable_cam_ddr_drv;
+
+	return 0;
+}
+EXPORT_SYMBOL(cam_cpas_query_drv_enable);
+
+int cam_cpas_csid_process_resume(uint32_t csid_idx)
+{
+	int rc;
+
+	if (!CAM_CPAS_INTF_INITIALIZED()) {
+		CAM_ERR(CAM_CPAS, "cpas intf not initialized");
+		return -ENODEV;
+	}
+
+	if (g_cpas_intf->hw_intf->hw_ops.process_cmd) {
+		rc = g_cpas_intf->hw_intf->hw_ops.process_cmd(
+			g_cpas_intf->hw_intf->hw_priv,
+			CAM_CPAS_HW_CMD_CSID_PROCESS_RESUME, &csid_idx,
+			sizeof(uint32_t));
+		if (rc)
+			CAM_ERR(CAM_CPAS, "Failed in process_cmd, rc=%d", rc);
+	} else {
+		CAM_ERR(CAM_CPAS, "Invalid process_cmd ops");
+		rc = -EINVAL;
+	}
+
+	return rc;
+}
+EXPORT_SYMBOL(cam_cpas_csid_process_resume);
+
+
+int cam_cpas_csid_input_core_info_update(int csid_idx, int sfe_idx, bool set_port)
+{
+	int rc;
+
+	if (!CAM_CPAS_INTF_INITIALIZED()) {
+		CAM_ERR(CAM_CPAS, "cpas intf not initialized");
+		return -ENODEV;
+	}
+
+	if (g_cpas_intf->hw_intf->hw_ops.process_cmd) {
+		struct cam_cpas_hw_cmd_csid_input_core_info_update core_info_update;
+
+		core_info_update.csid_idx = csid_idx;
+		core_info_update.sfe_idx = sfe_idx;
+		core_info_update.set_port = set_port;
+		rc = g_cpas_intf->hw_intf->hw_ops.process_cmd(
+			g_cpas_intf->hw_intf->hw_priv,
+			CAM_CPAS_HW_CMD_CSID_INPUT_CORE_INFO_UPDATE, &core_info_update,
+			sizeof(core_info_update));
+		if (rc)
+			CAM_ERR(CAM_CPAS, "Failed in process_cmd, rc=%d", rc);
+	} else {
+		CAM_ERR(CAM_CPAS, "Invalid process_cmd ops");
+		rc = -EINVAL;
+	}
+
+	return rc;
+}
+EXPORT_SYMBOL(cam_cpas_csid_input_core_info_update);
+
 int cam_cpas_dump_camnoc_buff_fill_info(uint32_t client_handle)
 {
 	int rc;
@@ -174,30 +268,30 @@ bool cam_cpas_is_part_supported(uint32_t flag, uint32_t hw_map, uint32_t part_in
 {
 	int32_t i;
 	struct cam_hw_info *cpas_hw = g_cpas_intf->hw_intf->hw_priv;
-	struct cam_cpas *cpas_core = NULL;
+	struct cam_cpas *cpas_core = cpas_hw->core_info;
+	struct cam_camnoc_info *camnoc_info = cpas_core->camnoc_info;
 	struct cam_cpas_subpart_info *cam_subpart_info = NULL;
 
-	mutex_lock(&cpas_hw->hw_mutex);
-	cpas_core = cpas_hw->core_info;
-	cam_subpart_info = cpas_core->cam_subpart_info;
+	if (!camnoc_info) {
+		CAM_ERR(CAM_CPAS, "Invalid camnoc info for hw_version: 0x%x",
+				cpas_hw->soc_info.hw_version);
+		return false;
+	}
+	cam_subpart_info = camnoc_info->cam_subpart_info;
 
 	if (!cam_subpart_info) {
 		CAM_DBG(CAM_CPAS, "Invalid address of cam_subpart_info");
-		mutex_unlock(&cpas_hw->hw_mutex);
 		return true;
 	}
 
 	for (i = 0; i < cam_subpart_info->num_bits; i++) {
 		if ((cam_subpart_info->hw_bitmap_mask[i][0] == flag) &&
-			(cam_subpart_info->hw_bitmap_mask[i][1] == hw_map)) {
+				(cam_subpart_info->hw_bitmap_mask[i][1] == hw_map)) {
 			CAM_DBG(CAM_CPAS, "flag: %u hw_map: %u part_info:0x%x",
-				flag, hw_map, part_info);
-			mutex_unlock(&cpas_hw->hw_mutex);
+					flag, hw_map, part_info);
 			return ((part_info & BIT(i)) == 0);
 		}
 	}
-
-	mutex_unlock(&cpas_hw->hw_mutex);
 	return true;
 }
 
@@ -521,9 +615,8 @@ int cam_cpas_start(uint32_t client_handle,
 }
 EXPORT_SYMBOL(cam_cpas_start);
 
-void cam_cpas_log_votes(void)
+void cam_cpas_log_votes(bool ddr_only)
 {
-	uint32_t dummy_args;
 	int rc;
 
 	if (!CAM_CPAS_INTF_INITIALIZED()) {
@@ -534,8 +627,8 @@ void cam_cpas_log_votes(void)
 	if (g_cpas_intf->hw_intf->hw_ops.process_cmd) {
 		rc = g_cpas_intf->hw_intf->hw_ops.process_cmd(
 			g_cpas_intf->hw_intf->hw_priv,
-			CAM_CPAS_HW_CMD_LOG_VOTE, &dummy_args,
-			sizeof(dummy_args));
+			CAM_CPAS_HW_CMD_LOG_VOTE, &ddr_only,
+			sizeof(ddr_only));
 		if (rc)
 			CAM_ERR(CAM_CPAS, "Failed in process_cmd, rc=%d", rc);
 	} else {
@@ -701,16 +794,11 @@ int cam_cpas_get_scid(
 }
 EXPORT_SYMBOL(cam_cpas_get_scid);
 
-int cam_cpas_prepare_subpart_info(enum cam_subparts_index idx, uint32_t num_subpart_available,
-	uint32_t num_subpart_functional)
+int cam_cpas_prepare_subpart_info(uint32_t subpart_type, uint32_t subpart_count)
 {
 	struct cam_hw_info *cpas_hw = NULL;
 	struct cam_cpas_private_soc *soc_private = NULL;
 
-	if (!CAM_CPAS_INTF_INITIALIZED()) {
-		CAM_ERR(CAM_CPAS, "cpas intf not initialized");
-		return -ENODEV;
-	}
 	cpas_hw = (struct cam_hw_info *) g_cpas_intf->hw_intf->hw_priv;
 
 	mutex_lock(&cpas_hw->hw_mutex);
@@ -722,33 +810,21 @@ int cam_cpas_prepare_subpart_info(enum cam_subparts_index idx, uint32_t num_subp
 		return -EINVAL;
 	}
 
-	switch (idx) {
-	case CAM_IFE_HW_IDX:
-		soc_private->sysfs_info.num_ifes[CAM_CPAS_AVAILABLE_NUM_SUBPARTS] =
-			num_subpart_available;
-		soc_private->sysfs_info.num_ifes[CAM_CPAS_FUNCTIONAL_NUM_SUBPARTS] =
-			num_subpart_functional;
+	switch (subpart_type) {
+	case CAM_SYSFS_IFE_HW_IDX:
+		soc_private->sysfs_info.num_ifes = subpart_count;
 		break;
-	case CAM_IFE_LITE_HW_IDX:
-		soc_private->sysfs_info.num_ife_lites[CAM_CPAS_AVAILABLE_NUM_SUBPARTS] =
-			num_subpart_available;
-		soc_private->sysfs_info.num_ife_lites[CAM_CPAS_FUNCTIONAL_NUM_SUBPARTS] =
-			num_subpart_functional;
+	case CAM_SYSFS_IFE_LITE_HW_IDX:
+		soc_private->sysfs_info.num_ife_lites = subpart_count;
 		break;
-	case CAM_SFE_HW_IDX:
-		soc_private->sysfs_info.num_sfes[CAM_CPAS_AVAILABLE_NUM_SUBPARTS] =
-			num_subpart_available;
-		soc_private->sysfs_info.num_sfes[CAM_CPAS_FUNCTIONAL_NUM_SUBPARTS] =
-			num_subpart_functional;
+	case CAM_SYSFS_SFE_HW_IDX:
+		soc_private->sysfs_info.num_sfes = subpart_count;
 		break;
-	case CAM_CUSTOM_HW_IDX:
-		soc_private->sysfs_info.num_custom[CAM_CPAS_AVAILABLE_NUM_SUBPARTS] =
-			num_subpart_available;
-		soc_private->sysfs_info.num_custom[CAM_CPAS_FUNCTIONAL_NUM_SUBPARTS] =
-			num_subpart_functional;
+	case CAM_SYSFS_CUSTOM_HW_IDX:
+		soc_private->sysfs_info.num_custom = subpart_count;
 		break;
 	default:
-		CAM_ERR(CAM_CPAS, "Invalid camera subpart index : %d", idx);
+		CAM_ERR(CAM_CPAS, "Invalid camera subpart type : %d", subpart_type);
 		mutex_unlock(&cpas_hw->hw_mutex);
 		return -EINVAL;
 	}
@@ -756,7 +832,7 @@ int cam_cpas_prepare_subpart_info(enum cam_subparts_index idx, uint32_t num_subp
 	mutex_unlock(&cpas_hw->hw_mutex);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(cam_cpas_prepare_subpart_info);
+EXPORT_SYMBOL(cam_cpas_prepare_subpart_info);
 
 int cam_cpas_activate_llcc(
 	enum cam_sys_cache_config_types type)
@@ -809,6 +885,24 @@ int cam_cpas_deactivate_llcc(
 	return rc;
 }
 EXPORT_SYMBOL(cam_cpas_deactivate_llcc);
+
+bool cam_cpas_query_domain_id_security_support(void)
+{
+	struct cam_hw_info *cpas_hw = NULL;
+	struct cam_cpas_private_soc *soc_private = NULL;
+
+	if (!CAM_CPAS_INTF_INITIALIZED()) {
+		CAM_ERR(CAM_CPAS, "cpas intf not initialized");
+		return false;
+	}
+
+	cpas_hw = (struct cam_hw_info *) g_cpas_intf->hw_intf->hw_priv;
+	soc_private =
+		(struct cam_cpas_private_soc *)cpas_hw->soc_info.soc_private;
+
+	return soc_private->domain_id_info.domain_id_supported;
+}
+EXPORT_SYMBOL(cam_cpas_query_domain_id_security_support);
 
 int cam_cpas_subdev_cmd(struct cam_cpas_intf *cpas_intf,
 	struct cam_control *cmd)

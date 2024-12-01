@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_SENSOR_UTIL_H_
@@ -32,6 +33,12 @@
  */
 #define QTIMER_MUL_FACTOR   10000
 #define QTIMER_DIV_FACTOR   192
+
+int cam_sensor_count_elems_i3c_device_id(struct device_node *dev,
+	int *num_entries, char *sensor_id_table_str);
+
+int cam_sensor_fill_i3c_device_id(struct device_node *dev, int num_entries,
+	char *sensor_id_table_str, struct i3c_device_id *sensor_i3c_device_id);
 
 int cam_get_dt_power_setting_data(struct device_node *of_node,
 	struct cam_hw_soc_info *soc_info,
@@ -65,7 +72,7 @@ int cam_sensor_util_init_gpio_pin_tbl(
 	struct cam_hw_soc_info *soc_info,
 	struct msm_camera_gpio_num_info **pgpio_num_info);
 int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
-		struct cam_hw_soc_info *soc_info);
+		struct cam_hw_soc_info *soc_info, struct completion *i3c_probe_status);
 
 int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 		struct cam_hw_soc_info *soc_info);
@@ -89,10 +96,10 @@ static inline int cam_sensor_util_aon_ops(bool get_access, uint32_t phy_idx)
 	return cam_csiphy_util_update_aon_ops(get_access, phy_idx);
 }
 
-static inline int cam_sensor_util_aon_registration(uint32_t phy_idx, bool aon_user)
+static inline int cam_sensor_util_aon_registration(uint32_t phy_idx, uint8_t aon_camera_id)
 {
-	CAM_DBG(CAM_SENSOR, "Regsiter phy_idx: %u for AON operatoin: %d", phy_idx, aon_user);
-	return cam_csiphy_util_update_aon_registration(phy_idx, aon_user);
+	CAM_DBG(CAM_SENSOR, "Register phy_idx: %u for AON_Camera_ID: %d", phy_idx, aon_camera_id);
+	return cam_csiphy_util_update_aon_registration(phy_idx, aon_camera_id);
 }
 
 #endif /* _CAM_SENSOR_UTIL_H_ */

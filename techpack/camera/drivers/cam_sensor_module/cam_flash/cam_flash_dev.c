@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  */
 
@@ -88,10 +88,6 @@ static int32_t cam_flash_driver_cmd(struct cam_flash_ctrl *fctrl,
 			rc = -EFAULT;
 			goto release_mutex;
 		}
-		if (fctrl->func_tbl.power_ops == cam_flash_pmic_power_ops) {
-			if (fctrl->func_tbl.power_ops(fctrl, true))
-				CAM_WARN(CAM_FLASH, "Power up Failed");
-		}
 		fctrl->flash_state = CAM_FLASH_STATE_ACQUIRE;
 
 		CAM_INFO(CAM_FLASH, "CAM_ACQUIRE_DEV for dev_hdl: 0x%x",
@@ -167,7 +163,6 @@ static int32_t cam_flash_driver_cmd(struct cam_flash_ctrl *fctrl,
 			goto release_mutex;
 		}
 		fctrl->apply_streamoff = false;
-		fctrl->flash_state = CAM_FLASH_STATE_START;
 		break;
 	}
 
@@ -237,7 +232,11 @@ static int32_t cam_flash_driver_cmd(struct cam_flash_ctrl *fctrl,
 		CAM_DBG(CAM_FLASH, "CAM_CONFIG_DEV");
 		rc = fctrl->func_tbl.parser(fctrl, arg);
 		if (rc) {
-			CAM_ERR(CAM_FLASH, "Failed Flash Config: rc=%d\n", rc);
+			if (rc == -EBADR)
+				CAM_INFO(CAM_FLASH,
+					"Failed Flash Config: rc=%d\n, it has been flushed", rc);
+			else
+				CAM_ERR(CAM_FLASH, "Failed Flash Config: rc=%d\n", rc);
 			goto release_mutex;
 		}
 		break;
@@ -333,9 +332,14 @@ static long cam_flash_subdev_ioctl(struct v4l2_subdev *sd,
 	case VIDIOC_CAM_CONTROL: {
 		rc = cam_flash_driver_cmd(fctrl, arg,
 			soc_private);
-		if (rc)
-			CAM_ERR(CAM_FLASH,
-				"Failed in driver cmd: %d", rc);
+		if (rc) {
+			if (rc == -EBADR)
+				CAM_INFO(CAM_FLASH,
+					"Failed in driver cmd: %d, it has been flushed", rc);
+			else
+				CAM_ERR(CAM_FLASH,
+					"Failed in driver cmd: %d", rc);
+		}
 		break;
 	}
 	case CAM_SD_SHUTDOWN:
@@ -443,6 +447,7 @@ static int cam_flash_component_bind(struct device *dev,
 	int32_t rc = 0, i = 0;
 	struct cam_flash_ctrl *fctrl = NULL;
 	struct device_node *of_parent = NULL;
+	bool i3c_i2c_target;
 	struct platform_device *pdev = to_platform_device(dev);
 	struct cam_hw_soc_info *soc_info = NULL;
 
@@ -451,6 +456,10 @@ static int cam_flash_component_bind(struct device *dev,
 		CAM_ERR(CAM_FLASH, "of_node NULL");
 		return -EINVAL;
 	}
+
+	i3c_i2c_target = of_property_read_bool(pdev->dev.of_node, "i3c-i2c-target");
+	if (i3c_i2c_target)
+		return 0;
 
 	fctrl = kzalloc(sizeof(struct cam_flash_ctrl), GFP_KERNEL);
 	if (!fctrl)
@@ -560,11 +569,6 @@ static int cam_flash_component_bind(struct device *dev,
 		fctrl->func_tbl.parser = cam_flash_pmic_pkt_parser;
 		fctrl->func_tbl.apply_setting = cam_flash_pmic_apply_setting;
 		fctrl->func_tbl.power_ops = NULL;
-#if IS_REACHABLE(CONFIG_LEDS_QPNP_FLASH_V2)
-		CAM_DBG(CAM_FLASH, "PMIC power_ops");
-		fctrl->is_regulator_enabled = false;
-		fctrl->func_tbl.power_ops = cam_flash_pmic_power_ops;
-#endif
 		fctrl->func_tbl.flush_req = cam_flash_pmic_flush_request;
 	}
 
@@ -608,7 +612,12 @@ static void cam_flash_component_unbind(struct device *dev,
 	struct device *master_dev, void *data)
 {
 	struct cam_flash_ctrl *fctrl;
+	bool i3c_i2c_target;
 	struct platform_device *pdev = to_platform_device(dev);
+
+	i3c_i2c_target = of_property_read_bool(pdev->dev.of_node, "i3c-i2c-target");
+	if (i3c_i2c_target)
+		return;
 
 	fctrl = platform_get_drvdata(pdev);
 	if (!fctrl) {
@@ -746,7 +755,6 @@ static int cam_flash_i2c_component_bind(struct device *dev,
 
 	fctrl->func_tbl.parser = cam_flash_i2c_pkt_parser;
 	fctrl->func_tbl.apply_setting = cam_flash_i2c_apply_setting;
-	fctrl->is_regulator_enabled = false;
 	fctrl->func_tbl.power_ops = cam_flash_i2c_power_ops;
 	fctrl->func_tbl.flush_req = cam_flash_i2c_flush_request;
 

@@ -10,7 +10,7 @@
 #include "cam_isp_hw.h"
 #include "cam_cpas_api.h"
 
-#define CAM_TFE_HW_NUM_MAX            3
+#define CAM_TFE_HW_NUM_MAX            4
 #define TFE_CORE_BASE_IDX             0
 
 
@@ -19,6 +19,7 @@ enum cam_isp_hw_tfe_in {
 	CAM_ISP_HW_TFE_IN_RDI0        = 1,
 	CAM_ISP_HW_TFE_IN_RDI1        = 2,
 	CAM_ISP_HW_TFE_IN_RDI2        = 3,
+	CAM_ISP_HW_TFE_IN_PDLIB       = 4,
 	CAM_ISP_HW_TFE_IN_MAX,
 };
 
@@ -35,6 +36,7 @@ enum cam_tfe_hw_irq_status {
 	CAM_TFE_IRQ_STATUS_OVERFLOW,
 	CAM_TFE_IRQ_STATUS_P2I_ERROR,
 	CAM_TFE_IRQ_STATUS_VIOLATION,
+	CAM_TFE_IRQ_STATUS_OUT_OF_SYNC,
 	CAM_TFE_IRQ_STATUS_MAX,
 };
 
@@ -93,7 +95,6 @@ struct cam_tfe_hw_get_hw_cap {
  *                           (Default is Master in case of Single TFE)
  * @cdm_ops:                 CDM operations
  * @ctx:                     Context data
- * @comp_grp_id:             TFE bus comp group id
  */
 struct cam_tfe_hw_tfe_out_acquire_args {
 	struct cam_isp_resource_node             *rsrc_node;
@@ -104,7 +105,6 @@ struct cam_tfe_hw_tfe_out_acquire_args {
 	uint32_t                                  is_master;
 	struct cam_cdm_utils_ops                 *cdm_ops;
 	void                                     *ctx;
-	uint32_t                                  comp_grp_id;
 };
 
 /*
@@ -120,6 +120,7 @@ struct cam_tfe_hw_tfe_out_acquire_args {
  * @in_port:                 Input port details to acquire
  * @camif_pd_enable          Camif pd enable or disable
  * @dual_tfe_sync_sel_idx    Dual tfe master hardware index
+ * @lcr_enable               LCR enable field
  */
 struct cam_tfe_hw_tfe_in_acquire_args {
 	struct cam_isp_resource_node            *rsrc_node;
@@ -129,6 +130,7 @@ struct cam_tfe_hw_tfe_in_acquire_args {
 	enum cam_isp_hw_sync_mode                sync_mode;
 	bool                                     camif_pd_enable;
 	uint32_t                                 dual_tfe_sync_sel_idx;
+	bool                                     lcr_enable;
 };
 
 /*
@@ -250,6 +252,15 @@ struct cam_tfe_irq_evt_payload {
  * @num_tfes:      Fills number of TFES in the address passed
  */
 void cam_tfe_get_num_tfe_hws(uint32_t *num_tfes);
+
+/*
+ * cam_tfe_get_num_tfe_lite_hws()
+ *
+ * @brief:         Gets number of TFE-LITEs
+ *
+ * @num_tfe_lites: Fills number of TFE-LITEs in the address passed
+ */
+void cam_tfe_get_num_tfe_lite_hws(uint32_t *num_tfe_lites);
 
 /*
  * cam_tfe_hw_init()

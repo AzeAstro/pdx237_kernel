@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
 #include <linux/firmware.h>
 
-#include <cam_sensor_cmn_header.h>
+#include "cam_sensor_cmn_header.h"
 #include "cam_ois_core.h"
 #include "cam_ois_soc.h"
 #include "cam_sensor_util.h"
@@ -105,14 +105,13 @@ static int cam_ois_get_dev_handle(struct cam_ois_ctrl_t *o_ctrl,
 
 static int cam_ois_power_up(struct cam_ois_ctrl_t *o_ctrl)
 {
-	int                             rc = 0;
-	struct cam_hw_soc_info          *soc_info =
-		&o_ctrl->soc_info;
-	struct cam_ois_soc_private *soc_private;
-	struct cam_sensor_power_ctrl_t  *power_info;
+	int                                     rc = 0;
+	struct cam_hw_soc_info                 *soc_info = &o_ctrl->soc_info;
+	struct cam_ois_soc_private             *soc_private;
+	struct cam_sensor_power_ctrl_t         *power_info;
+	struct completion                      *i3c_probe_completion = NULL;
 
-	soc_private =
-		(struct cam_ois_soc_private *)o_ctrl->soc_info.soc_private;
+	soc_private = (struct cam_ois_soc_private *)o_ctrl->soc_info.soc_private;
 	power_info = &soc_private->power_info;
 
 	if ((power_info->power_setting == NULL) &&
@@ -151,7 +150,10 @@ static int cam_ois_power_up(struct cam_ois_ctrl_t *o_ctrl)
 
 	power_info->dev = soc_info->dev;
 
-	rc = cam_sensor_core_power_up(power_info, soc_info);
+	if (o_ctrl->io_master_info.master_type == I3C_MASTER)
+		i3c_probe_completion = cam_ois_get_i3c_completion(o_ctrl->soc_info.index);
+
+	rc = cam_sensor_core_power_up(power_info, soc_info, i3c_probe_completion);
 	if (rc) {
 		CAM_ERR(CAM_OIS, "failed in ois power up rc %d", rc);
 		return rc;
@@ -207,6 +209,7 @@ static int cam_ois_power_down(struct cam_ois_ctrl_t *o_ctrl)
 	}
 
 	camera_io_release(&o_ctrl->io_master_info);
+	o_ctrl->cam_ois_state = CAM_OIS_ACQUIRE;
 
 	return rc;
 }
@@ -552,10 +555,6 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 
 		/* Loop through multiple command buffers */
 		for (i = 0; i < csl_packet->num_cmd_buf; i++) {
-			rc = cam_packet_util_validate_cmd_desc(&cmd_desc[i]);
-			if (rc)
-				return rc;
-
 			total_cmd_buf_in_bytes = cmd_desc[i].length;
 			if (!total_cmd_buf_in_bytes)
 				continue;
@@ -683,7 +682,6 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 				cam_mem_put_cpu_buf(dev_config.packet_handle);
 				return rc;
 			}
-			o_ctrl->cam_ois_state = CAM_OIS_CONFIG;
 		}
 
 		if (o_ctrl->i2c_fwinit_data.is_settings_valid == 1) {
@@ -751,6 +749,8 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 				CAM_DBG(CAM_OIS, "apply calib data settings success");
 			}
 		}
+
+		o_ctrl->cam_ois_state = CAM_OIS_CONFIG;
 
 		rc = delete_request(&o_ctrl->i2c_fwinit_data);
 		if (rc < 0) {
@@ -977,7 +977,6 @@ void cam_ois_shutdown(struct cam_ois_ctrl_t *o_ctrl)
 		rc = cam_ois_power_down(o_ctrl);
 		if (rc < 0)
 			CAM_ERR(CAM_OIS, "OIS Power down failed");
-		o_ctrl->cam_ois_state = CAM_OIS_ACQUIRE;
 	}
 
 	if (o_ctrl->cam_ois_state >= CAM_OIS_ACQUIRE) {

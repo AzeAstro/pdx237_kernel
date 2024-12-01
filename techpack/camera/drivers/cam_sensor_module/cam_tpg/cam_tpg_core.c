@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_tpg_core.h"
@@ -14,7 +14,8 @@ int cam_tpg_shutdown(struct cam_tpg_device *tpg_dev)
 	if (tpg_dev != NULL) {
 		CAM_INFO(CAM_TPG, "TPG[%d] shutdown cleanup.",
 				tpg_dev->soc_info.index);
-		tpg_hw_reset(&tpg_dev->tpg_hw);
+		if (!tpg_dev->hw_no_ops)
+			tpg_hw_reset(&tpg_dev->tpg_hw);
 		tpg_dev->state = CAM_TPG_STATE_INIT;
 	}
 	return 0;
@@ -118,7 +119,12 @@ static int cam_tpg_process_crm_evt(
 
 	switch(event->evt_type) {
 	case CAM_REQ_MGR_LINK_EVT_SOF_FREEZE:
-		tpg_hw_dump_status(&tpg_dev->tpg_hw);
+		if (tpg_dev->hw_no_ops) {
+			CAM_DBG(CAM_TPG, "TPG[%d] SOF Freeze hw_no_ops: %d",
+				tpg_dev->soc_info.index, tpg_dev->hw_no_ops);
+		} else
+			tpg_hw_dump_status(&tpg_dev->tpg_hw);
+
 		break;
 	default:
 		CAM_DBG(CAM_TPG, "Got crm event notification: %d", event->evt_type);
@@ -255,11 +261,13 @@ static int __cam_tpg_handle_release_dev(
 	if (tpg_dev->state == CAM_TPG_STATE_START) {
 		CAM_DBG(CAM_TPG, "TPG[%d] release from start state",
 						tpg_dev->soc_info.index);
-		rc = tpg_hw_stop(&tpg_dev->tpg_hw);
-		if (rc < 0) {
-			CAM_ERR(CAM_TPG, "TPG[%d] unable to stop tpg",
+		if (!tpg_dev->hw_no_ops) {
+			rc = tpg_hw_stop(&tpg_dev->tpg_hw);
+			if (rc < 0) {
+				CAM_ERR(CAM_TPG, "TPG[%d] unable to stop tpg",
 						tpg_dev->soc_info.index);
-			return rc;
+				return rc;
+			}
 		}
 	}
 	rc = tpg_hw_release(&tpg_dev->tpg_hw);
@@ -299,12 +307,15 @@ static int __cam_tpg_handle_start_dev(
 				tpg_dev->soc_info.index, tpg_dev->state);
 		return -EINVAL;
 	}
-	rc = tpg_hw_start(&tpg_dev->tpg_hw);
+	if (!tpg_dev->hw_no_ops)
+		rc = tpg_hw_start(&tpg_dev->tpg_hw);
 	if (rc) {
-		CAM_ERR(CAM_TPG, "TPG[%d] START_DEV failed", tpg_dev->soc_info.index);
+		CAM_ERR(CAM_TPG, "TPG[%d] START_DEV failed hw_no_ops: %d",
+				tpg_dev->soc_info.index, tpg_dev->hw_no_ops);
 	} else {
 		tpg_dev->state = CAM_TPG_STATE_START;
-		CAM_INFO(CAM_TPG, "TPG[%d] START_DEV done.", tpg_dev->soc_info.index);
+		CAM_INFO(CAM_TPG, "TPG[%d] START_DEV done hw_no_ops: %d.",
+				tpg_dev->soc_info.index, tpg_dev->hw_no_ops);
 	}
 
 	return rc;
@@ -331,34 +342,34 @@ static int __cam_tpg_handle_stop_dev(
 		CAM_WARN(CAM_TPG, "TPG[%d] not in right state[%d] to stop",
 				tpg_dev->soc_info.index, tpg_dev->state);
 	}
-	rc = tpg_hw_stop(&tpg_dev->tpg_hw);
+	if (!tpg_dev->hw_no_ops)
+		rc = tpg_hw_stop(&tpg_dev->tpg_hw);
 	if (rc) {
-		CAM_ERR(CAM_TPG, "TPG[%d] STOP_DEV failed", tpg_dev->soc_info.index);
+		CAM_ERR(CAM_TPG, "TPG[%d] STOP_DEV failed hw_no_ops: %d",
+				tpg_dev->soc_info.index, tpg_dev->hw_no_ops);
 	} else {
 		/* Free all allocated streams during stop dev */
-		tpg_hw_free_streams(&tpg_dev->tpg_hw);
+		if (!tpg_dev->hw_no_ops)
+			tpg_hw_free_streams(&tpg_dev->tpg_hw);
 		tpg_dev->state = CAM_TPG_STATE_ACQUIRE;
-		CAM_INFO(CAM_TPG, "TPG[%d] STOP_DEV done.", tpg_dev->soc_info.index);
+		CAM_INFO(CAM_TPG, "TPG[%d] STOP_DEV done hw_no_ops: %d.",
+				tpg_dev->soc_info.index, tpg_dev->hw_no_ops);
 	}
 
 	return rc;
 }
 
-static int cam_tpg_validate_cmd_desc_fill_config(
+static int cam_tpg_validate_cmd_descriptor(
 	struct cam_cmd_buf_desc *cmd_desc,
-	struct cam_tpg_device *tpg_dev)
+	uint32_t *cmd_type, uintptr_t *cmd_addr)
 {
-	uintptr_t         generic_ptr;
-	int               rc                          = 0;
-	size_t            len_of_buff                 = 0;
-	size_t            remain_len                  = 0;
-	ssize_t           cmd_header_size             = 0;
-	uint32_t          *cmd_buf                    = NULL;
-	uint8_t           *local_cmd_buff             = NULL;
-	struct tpg_command_header_t *local_cmd_header = NULL;
-	struct tpg_command_header_t *cmd_header       = NULL;
+	int rc = 0;
+	uintptr_t generic_ptr;
+	size_t len_of_buff = 0;
+	uint32_t                *cmd_buf = NULL;
+	struct tpg_command_header_t *cmd_header = NULL;
 
-	if (!cmd_desc || !tpg_dev)
+	if (!cmd_desc || !cmd_type || !cmd_addr)
 		return -EINVAL;
 
 	rc = cam_mem_get_cpu_buf(cmd_desc->mem_handle,
@@ -369,101 +380,62 @@ static int cam_tpg_validate_cmd_desc_fill_config(
 		return rc;
 	}
 
-	if (cmd_desc->offset >= len_of_buff) {
-		CAM_ERR(CAM_TPG,
-			"Buffer Offset past length of buffer");
-		rc = -EINVAL;
-		goto end;
-	}
-	remain_len = len_of_buff - cmd_desc->offset;
-
-	if ((cmd_desc->size > remain_len) ||
-		(cmd_desc->length > cmd_desc->size)) {
-		CAM_ERR(CAM_TPG,
-			"Got Invalid command descriptor");
-		rc = -EINVAL;
-		goto end;
-		}
-
-	if (remain_len < sizeof(struct tpg_command_header_t)) {
-		CAM_ERR(CAM_TPG, "Got invalid cmd descriptor buffer size");
-		rc = -EINVAL;
-		goto end;
-	}
-
 	cmd_buf = (uint32_t *)generic_ptr;
 	cmd_buf += cmd_desc->offset / 4;
 	cmd_header = (struct tpg_command_header_t *)cmd_buf;
 
-	cmd_header_size = cmd_header->size;
-
-	/* Check for cmd_header_size overflow or underflow condition */
-	if ((cmd_header_size < 0) ||
-		(SIZE_MAX - cmd_header_size < cmd_desc->offset)) {
-		CAM_ERR(CAM_TPG, "Got invalid cmd header size");
-		rc = -EINVAL;
-		goto end;
-		}
-
-	if ((cmd_desc->offset + (size_t)cmd_header_size) > len_of_buff) {
-		CAM_ERR(CAM_TPG, "Cmd header offset mismatch");
+	if (len_of_buff < sizeof(struct tpg_command_header_t)) {
+		CAM_ERR(CAM_TPG, "Got invalid command descriptor of invalid cmd buffer size");
 		rc = -EINVAL;
 		goto end;
 	}
 
-	/* Copying the data locally to avoid toctou vulnerability */
-	local_cmd_buff = kzalloc(cmd_header_size, GFP_KERNEL);
-	if (!local_cmd_buff) {
-		CAM_ERR(CAM_TPG, "Local cmd_header mem allocation failed");
-		rc = -ENOMEM;
-		goto end;
-	}
-	memcpy(local_cmd_buff, cmd_header, cmd_header_size);
-	local_cmd_header = (struct tpg_command_header_t *)local_cmd_buff;
-	local_cmd_header->size = cmd_header_size;
-
-	switch (local_cmd_header->cmd_type) {
+	switch (cmd_header->cmd_type) {
 	case TPG_CMD_TYPE_GLOBAL_CONFIG: {
-		if (cmd_header_size != sizeof(struct tpg_global_config_t)) {
+		if (cmd_header->size != sizeof(struct tpg_global_config_t)) {
 			CAM_ERR(CAM_TPG, "Got invalid global config command recv: %d exp: %d",
-					cmd_header_size,
+					cmd_header->size,
 					sizeof(struct tpg_global_config_t));
 			rc = -EINVAL;
 			goto end;
 		}
-		CAM_INFO(CAM_TPG, "Got TPG global config cmd");
-		rc = tpg_hw_copy_global_config(&tpg_dev->tpg_hw,
-			(struct tpg_global_config_t *)local_cmd_buff);
+		CAM_INFO(CAM_TPG, "Got global config cmd");
+		*cmd_type = TPG_CMD_TYPE_GLOBAL_CONFIG;
 		break;
 	}
 	case TPG_CMD_TYPE_STREAM_CONFIG: {
-		if (cmd_header_size != sizeof(struct tpg_stream_config_t)) {
+		if (cmd_header->size != sizeof(struct tpg_stream_config_t)) {
 			CAM_ERR(CAM_TPG, "Got invalid stream config command recv: %d exp: %d",
-					cmd_header_size,
+					cmd_header->size,
 					sizeof(struct tpg_stream_config_t));
+
 			rc = -EINVAL;
 			goto end;
 		}
 		CAM_INFO(CAM_TPG, "Got stream config cmd");
-		rc = tpg_hw_add_stream(&tpg_dev->tpg_hw,
-			(struct tpg_stream_config_t *)local_cmd_buff);
+		*cmd_type = TPG_CMD_TYPE_STREAM_CONFIG;
 		break;
 	}
 	case TPG_CMD_TYPE_ILLUMINATION_CONFIG: {
-		if (cmd_header_size != sizeof(struct tpg_illumination_control)) {
+		if (cmd_header->size != sizeof(struct tpg_illumination_control)) {
 			CAM_ERR(CAM_TPG, "Got invalid illumination config command");
 			rc = -EINVAL;
 			goto end;
 		}
-		CAM_ERR(CAM_TPG, "TPG[%d] ILLUMINATION CONFIG not supported currently ",
-				&tpg_dev->soc_info.index);
+		*cmd_type = TPG_CMD_TYPE_ILLUMINATION_CONFIG;
 		break;
 	}
 	default:
 		rc = -EINVAL;
-		CAM_ERR(CAM_TPG, "Invalid config command");
+		CAM_ERR(CAM_TPG, "invalid config command");
 		goto end;
 	}
+	if ((ssize_t)cmd_desc->offset > (len_of_buff - cmd_header->size)) {
+		CAM_ERR(CAM_TPG, "cmd header offset mismatch");
+		rc = -EINVAL;
+	}
+
+	*cmd_addr = (uintptr_t)cmd_header;
 end:
 	cam_mem_put_cpu_buf(cmd_desc->mem_handle);
 	return rc;
@@ -486,15 +458,45 @@ static int cam_tpg_cmd_buf_parse(
 	}
 
 	for (i = 0; i < packet->num_cmd_buf; i++) {
+		uint32_t cmd_type = TPG_CMD_TYPE_INVALID;
+		uintptr_t cmd_addr;
+
 		cmd_desc = (struct cam_cmd_buf_desc *)
 			((uint32_t *)&packet->payload +
 			(packet->cmd_buf_offset / 4) +
 			(i * (sizeof(struct cam_cmd_buf_desc)/4)));
 
-		rc = cam_tpg_validate_cmd_desc_fill_config(cmd_desc, tpg_dev);
+		rc = cam_tpg_validate_cmd_descriptor(cmd_desc,
+				&cmd_type, &cmd_addr);
 		if (rc < 0)
+			goto end;
+
+		switch (cmd_type) {
+		case TPG_CMD_TYPE_GLOBAL_CONFIG:
+			if (!tpg_dev->hw_no_ops)
+				rc = tpg_hw_copy_global_config(
+					&tpg_dev->tpg_hw,
+				(struct tpg_global_config_t *)cmd_addr);
 			break;
+		case TPG_CMD_TYPE_STREAM_CONFIG: {
+			if (!tpg_dev->hw_no_ops)
+				rc = tpg_hw_add_stream(&tpg_dev->tpg_hw,
+				(struct tpg_stream_config_t *)cmd_addr);
+			break;
+		}
+		case TPG_CMD_TYPE_ILLUMINATION_CONFIG:
+			CAM_ERR(CAM_TPG, "TPG[%d] ILLUMINATION CONFIG not supported now ",
+								tpg_dev->soc_info.index);
+			break;
+		default:
+			CAM_ERR(CAM_TPG, "TPG[%d] invalid command %d",
+				tpg_dev->soc_info.index,
+				cmd_type);
+			rc = -EINVAL;
+			break;
+		}
 	}
+end:
 	return rc;
 }
 
@@ -542,6 +544,7 @@ static int cam_tpg_packet_parse(
 			csl_packet->num_cmd_buf,
 			csl_packet->num_io_configs,
 			csl_packet->num_patches);
+
 	switch ((csl_packet->header.op_code & 0xFF)) {
 	case CAM_TPG_PACKET_OPCODE_INITIAL_CONFIG: {
 		if (csl_packet->num_cmd_buf <= 0) {
@@ -554,7 +557,8 @@ static int cam_tpg_packet_parse(
 			CAM_ERR(CAM_TPG, "CMD buffer parse failed");
 			goto end;
 		}
-		tpg_hw_config(&tpg_dev->tpg_hw, TPG_HW_CMD_INIT_CONFIG, NULL);
+		if (!tpg_dev->hw_no_ops)
+			tpg_hw_config(&tpg_dev->tpg_hw, TPG_HW_CMD_INIT_CONFIG, NULL);
 		break;
 	}
 	case CAM_TPG_PACKET_OPCODE_NOP: {

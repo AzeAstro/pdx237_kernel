@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/iopoll.h>
@@ -1720,11 +1720,6 @@ int cam_ife_csid_ver1_reserve(void *hw_priv,
 	hw_info = (struct cam_hw_info *)hw_priv;
 	csid_hw = (struct cam_ife_csid_ver1_hw *)hw_info->core_info;
 
-	if (reserve->res_id >= CAM_IFE_PIX_PATH_RES_MAX) {
-		CAM_DBG(CAM_ISP, "CSID %d invalid Res_id %d",
-				csid_hw->hw_intf->hw_idx, reserve->res_id);
-		return -EINVAL;
-	}
 	res = &csid_hw->path_res[reserve->res_id];
 
 	if (res->res_state != CAM_ISP_RESOURCE_STATE_AVAILABLE) {
@@ -1830,14 +1825,6 @@ int cam_ife_csid_ver1_release(void *hw_priv,
 		csid_hw->hw_intf->hw_idx, res->res_type, res->res_id);
 
 	path_cfg = (struct cam_ife_csid_ver1_path_cfg *)res->res_priv;
-
-	if (path_cfg->cid >= CAM_IFE_CSID_CID_MAX) {
-		CAM_ERR(CAM_ISP, "CSID:%d Invalid cid:%d",
-				csid_hw->hw_intf->hw_idx, path_cfg->cid);
-		rc = -EINVAL;
-		goto end;
-	}
-
 	cam_ife_csid_cid_release(&csid_hw->cid_data[path_cfg->cid],
 		csid_hw->hw_intf->hw_idx,
 		path_cfg->cid);
@@ -2639,10 +2626,13 @@ static int cam_ife_csid_ver1_enable_hw(struct cam_ife_csid_ver1_hw *csid_hw)
 			csid_hw->core_info->csid_reg;
 	soc_info = &csid_hw->hw_info->soc_info;
 
+	mutex_lock(&csid_hw->hw_info->hw_mutex);
+
 	/* overflow check before increment */
 	if (csid_hw->hw_info->open_count == UINT_MAX) {
 		CAM_ERR(CAM_ISP, "CSID:%d Open count reached max",
 			csid_hw->hw_intf->hw_idx);
+			mutex_unlock(&csid_hw->hw_info->hw_mutex);
 		return -EINVAL;
 	}
 
@@ -2651,8 +2641,10 @@ static int cam_ife_csid_ver1_enable_hw(struct cam_ife_csid_ver1_hw *csid_hw)
 
 	if (csid_hw->hw_info->open_count > 1) {
 		CAM_DBG(CAM_ISP, "CSID hw has already been enabled");
+		mutex_unlock(&csid_hw->hw_info->hw_mutex);
 		return rc;
 	}
+	mutex_unlock(&csid_hw->hw_info->hw_mutex);
 
 	rc = cam_soc_util_get_clk_level(soc_info, csid_hw->clk_rate,
 		soc_info->src_clk_idx, &clk_lvl);
@@ -2721,6 +2713,7 @@ static int cam_ife_csid_ver1_enable_hw(struct cam_ife_csid_ver1_hw *csid_hw)
 	csid_hw->flags.fatal_err_detected = false;
 	csid_hw->flags.device_enabled = true;
 	spin_unlock_irqrestore(&csid_hw->lock_state, flags);
+	cam_tasklet_start(csid_hw->tasklet);
 
 	return rc;
 
@@ -2728,7 +2721,9 @@ disable_soc:
 	cam_ife_csid_disable_soc_resources(soc_info);
 	csid_hw->hw_info->hw_state = CAM_HW_STATE_POWER_DOWN;
 err:
+	mutex_lock(&csid_hw->hw_info->hw_mutex);
 	csid_hw->hw_info->open_count--;
+	mutex_unlock(&csid_hw->hw_info->hw_mutex);
 	return rc;
 }
 
@@ -2805,7 +2800,14 @@ int cam_ife_csid_ver1_init_hw(void *hw_priv,
 	default:
 		CAM_ERR(CAM_ISP, "CSID:%d Invalid Res id %d",
 			csid_hw->hw_intf->hw_idx, res->res_id);
+		rc = -EINVAL;
 		break;
+	}
+
+	if (rc < 0) {
+		CAM_ERR(CAM_ISP, "CSID:%d res_id:%d path init configuration failed with rc: %d",
+			csid_hw->hw_intf->hw_idx, res->res_id, rc);
+		goto end;
 	}
 
 	rc = cam_ife_csid_ver1_hw_reset(csid_hw);
@@ -2863,17 +2865,22 @@ static int cam_ife_csid_ver1_disable_hw(
 	int rc = 0;
 	unsigned long                             flags;
 
+	mutex_lock(&csid_hw->hw_info->hw_mutex);
 	/* Check for refcount */
 	if (!csid_hw->hw_info->open_count) {
 		CAM_WARN(CAM_ISP, "Unbalanced disable_hw");
+		mutex_unlock(&csid_hw->hw_info->hw_mutex);
 		return rc;
 	}
 
 	/* Decrement ref Count */
 	csid_hw->hw_info->open_count--;
 
-	if (csid_hw->hw_info->open_count)
+	if (csid_hw->hw_info->open_count) {
+		mutex_unlock(&csid_hw->hw_info->hw_mutex);
 		return rc;
+	}
+	mutex_unlock(&csid_hw->hw_info->hw_mutex);
 
 	soc_info = &csid_hw->hw_info->soc_info;
 	csid_reg = (struct cam_ife_csid_ver1_reg_info *)
@@ -2885,6 +2892,7 @@ static int cam_ife_csid_ver1_disable_hw(
 	cam_io_w_mb(0, soc_info->reg_map[0].mem_base +
 		csid_reg->cmn_reg->top_irq_mask_addr);
 
+	cam_tasklet_stop(csid_hw->tasklet);
 	rc = cam_ife_csid_disable_soc_resources(soc_info);
 	if (rc)
 		CAM_ERR(CAM_ISP, "CSID:%d Disable CSID SOC failed",
@@ -3451,7 +3459,6 @@ static int cam_ife_csid_ver1_get_time_stamp(
 	struct cam_hw_soc_info              *soc_info;
 	struct cam_csid_get_time_stamp_args *timestamp_args;
 	struct cam_ife_csid_ver1_reg_info *csid_reg;
-	uint64_t  time_delta;
 	struct timespec64 ts;
 	uint32_t curr_0_sof_addr, curr_1_sof_addr;
 
@@ -3514,19 +3521,15 @@ static int cam_ife_csid_ver1_get_time_stamp(
 		CAM_IFE_CSID_QTIMER_MUL_FACTOR,
 		CAM_IFE_CSID_QTIMER_DIV_FACTOR);
 
-	time_delta = timestamp_args->time_stamp_val -
-		csid_hw->timestamp.prev_sof_ts;
-
-	if (!csid_hw->timestamp.prev_boot_ts) {
+	if (qtime_to_boottime == 0) {
 		ktime_get_boottime_ts64(&ts);
-		timestamp_args->boot_timestamp =
+		qtime_to_boottime =
 			(uint64_t)((ts.tv_sec * 1000000000) +
-			ts.tv_nsec);
-	} else {
-		timestamp_args->boot_timestamp =
-			csid_hw->timestamp.prev_boot_ts + time_delta;
+			ts.tv_nsec) - (int64_t)timestamp_args->time_stamp_val;
 	}
 
+	timestamp_args->boot_timestamp = timestamp_args->time_stamp_val +
+		qtime_to_boottime;
 	CAM_DBG(CAM_ISP, "timestamp:%lld",
 		timestamp_args->boot_timestamp);
 	csid_hw->timestamp.prev_sof_ts = timestamp_args->time_stamp_val;
@@ -3779,6 +3782,14 @@ static int cam_ife_csid_ver1_process_cmd(void *hw_priv,
 		rc = cam_ife_csid_halt(csid_hw, cmd_args);
 		break;
 	case CAM_ISP_HW_CMD_CSID_DISCARD_INIT_FRAMES:
+		/* Not supported for V1 */
+		rc = 0;
+		break;
+	case CAM_ISP_HW_CMD_DRV_CONFIG:
+		/* Not supported for V1 */
+		rc = 0;
+		break;
+	case CAM_IFE_CSID_RESET_OUT_OF_SYNC_CNT:
 		/* Not supported for V1 */
 		rc = 0;
 		break;
@@ -4758,7 +4769,7 @@ int cam_ife_csid_hw_ver1_init(struct cam_hw_intf  *hw_intf,
 		init_completion(&ife_csid_hw->irq_complete[i]);
 
 	rc = cam_ife_csid_init_soc_resources(&ife_csid_hw->hw_info->soc_info,
-			cam_ife_csid_irq, ife_csid_hw, is_custom);
+			cam_ife_csid_irq, NULL, ife_csid_hw, is_custom);
 	if (rc < 0) {
 		CAM_ERR(CAM_ISP, "CSID:%d Failed to init_soc",
 			hw_intf->hw_idx);

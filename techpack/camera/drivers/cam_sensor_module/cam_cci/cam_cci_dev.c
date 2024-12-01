@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_cci_dev.h"
@@ -289,18 +290,28 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 	if (irq_status0 & CCI_IRQ_STATUS_0_I2C_M0_ERROR_BMSK) {
 		cci_dev->cci_master_info[MASTER_0].status = -EINVAL;
 		if (irq_status0 & CCI_IRQ_STATUS_0_I2C_M0_Q0_NACK_ERROR_BMSK) {
-			CAM_ERR(CAM_CCI,
-				"Base:%pK,cci: %d, M0_Q0 NACK ERROR: 0x%x",
-				base, cci_dev->soc_info.index, irq_status0);
+			if (cci_dev->is_probing)
+				CAM_INFO(CAM_CCI,
+					"Base:%pK,cci: %d, M0_Q0 NACK ERROR: 0x%x",
+					base, cci_dev->soc_info.index, irq_status0);
+			else
+				CAM_ERR(CAM_CCI,
+					"Base:%pK,cci: %d, M0_Q0 NACK ERROR: 0x%x",
+					base, cci_dev->soc_info.index, irq_status0);
 			cam_cci_dump_registers(cci_dev, MASTER_0,
 					QUEUE_0);
 			complete_all(&cci_dev->cci_master_info[MASTER_0]
 				.report_q[QUEUE_0]);
 		}
 		if (irq_status0 & CCI_IRQ_STATUS_0_I2C_M0_Q1_NACK_ERROR_BMSK) {
-			CAM_ERR(CAM_CCI,
-				"Base:%pK,cci: %d, M0_Q1 NACK ERROR: 0x%x",
-				base, cci_dev->soc_info.index, irq_status0);
+			if (cci_dev->is_probing)
+				CAM_INFO(CAM_CCI,
+					"Base:%pK,cci: %d, M0_Q1 NACK ERROR: 0x%x",
+					base, cci_dev->soc_info.index, irq_status0);
+			else
+				CAM_ERR(CAM_CCI,
+					"Base:%pK,cci: %d, M0_Q1 NACK ERROR: 0x%x",
+					base, cci_dev->soc_info.index, irq_status0);
 			cam_cci_dump_registers(cci_dev, MASTER_0,
 					QUEUE_1);
 			complete_all(&cci_dev->cci_master_info[MASTER_0]
@@ -321,18 +332,28 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 	if (irq_status0 & CCI_IRQ_STATUS_0_I2C_M1_ERROR_BMSK) {
 		cci_dev->cci_master_info[MASTER_1].status = -EINVAL;
 		if (irq_status0 & CCI_IRQ_STATUS_0_I2C_M1_Q0_NACK_ERROR_BMSK) {
-			CAM_ERR(CAM_CCI,
-				"Base:%pK, cci: %d, M1_Q0 NACK ERROR: 0x%x",
-				base, cci_dev->soc_info.index, irq_status0);
+			if (cci_dev->is_probing)
+				CAM_INFO(CAM_CCI,
+					"Base:%pK, cci: %d, M1_Q0 NACK ERROR: 0x%x",
+					base, cci_dev->soc_info.index, irq_status0);
+			else
+				CAM_ERR(CAM_CCI,
+					"Base:%pK, cci: %d, M1_Q0 NACK ERROR: 0x%x",
+					base, cci_dev->soc_info.index, irq_status0);
 			cam_cci_dump_registers(cci_dev, MASTER_1,
 					QUEUE_0);
 			complete_all(&cci_dev->cci_master_info[MASTER_1]
 			.report_q[QUEUE_0]);
 		}
 		if (irq_status0 & CCI_IRQ_STATUS_0_I2C_M1_Q1_NACK_ERROR_BMSK) {
-			CAM_ERR(CAM_CCI,
-				"Base:%pK, cci: %d, M1_Q1 NACK ERROR: 0x%x",
-				base, cci_dev->soc_info.index, irq_status0);
+			if (cci_dev->is_probing)
+				CAM_INFO(CAM_CCI,
+					"Base:%pK, cci: %d, M1_Q1 NACK ERROR: 0x%x",
+					base, cci_dev->soc_info.index, irq_status0);
+			else
+				CAM_ERR(CAM_CCI,
+					"Base:%pK, cci: %d, M1_Q1 NACK ERROR: 0x%x",
+					base, cci_dev->soc_info.index, irq_status0);
 			cam_cci_dump_registers(cci_dev, MASTER_1,
 				QUEUE_1);
 			complete_all(&cci_dev->cci_master_info[MASTER_1]
@@ -405,44 +426,31 @@ DEFINE_DEBUGFS_ATTRIBUTE(cam_cci_debug,
 
 static int cam_cci_create_debugfs_entry(struct cci_device *cci_dev)
 {
-	int rc = 0;
+	int rc = 0, idx;
 	struct dentry *dbgfileptr = NULL;
+	static char * const filename[] = { "en_dump_cci0", "en_dump_cci1", "en_dump_cci2"};
+
+	if (!cam_debugfs_available())
+		return 0;
 
 	if (!debugfs_root) {
-		dbgfileptr = debugfs_create_dir("cam_cci", NULL);
-		if (!dbgfileptr) {
+		rc = cam_debugfs_create_subdir("cci", &dbgfileptr);
+		if (rc) {
 			CAM_ERR(CAM_CCI, "debugfs directory creation fail");
-			rc = -ENOENT;
-			goto end;
+			return rc;
 		}
 		debugfs_root = dbgfileptr;
 	}
 
-	if (cci_dev->soc_info.index == 0) {
-		dbgfileptr = debugfs_create_file("en_dump_cci0", 0644,
-			debugfs_root, cci_dev, &cam_cci_debug);
-		if (IS_ERR(dbgfileptr)) {
-			if (PTR_ERR(dbgfileptr) == -ENODEV)
-				CAM_WARN(CAM_CCI, "DebugFS not enabled");
-			else {
-				rc = PTR_ERR(dbgfileptr);
-				goto end;
-			}
-		}
-	} else {
-		dbgfileptr = debugfs_create_file("en_dump_cci1", 0644,
-			debugfs_root, cci_dev, &cam_cci_debug);
-		if (IS_ERR(dbgfileptr)) {
-			if (PTR_ERR(dbgfileptr) == -ENODEV)
-				CAM_WARN(CAM_CCI, "DebugFS not enabled");
-			else {
-				rc = PTR_ERR(dbgfileptr);
-				goto end;
-			}
-		}
+	idx = cci_dev->soc_info.index;
+	if (idx >= ARRAY_SIZE(filename)) {
+		CAM_ERR(CAM_CCI, "cci-dev %d invalid", idx);
+		return -ENODEV;
 	}
-end:
-	return rc;
+
+	debugfs_create_file(filename[idx], 0644, debugfs_root, cci_dev, &cam_cci_debug);
+
+	return 0;
 }
 
 static int cam_cci_component_bind(struct device *dev,
@@ -547,7 +555,6 @@ static void cam_cci_component_unbind(struct device *dev,
 		v4l2_get_subdevdata(subdev);
 
 	cam_cpas_unregister_client(cci_dev->cpas_handle);
-	debugfs_remove_recursive(debugfs_root);
 	debugfs_root = NULL;
 	cam_cci_soc_remove(pdev, cci_dev);
 	rc = cam_unregister_subdev(&(cci_dev->v4l2_dev_str));

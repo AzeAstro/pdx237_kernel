@@ -36,9 +36,9 @@ static struct cam_irq_register_set vfe480_top_irq_reg_set[3] = {
 static struct cam_irq_controller_reg_info vfe480_top_irq_reg_info = {
 	.num_registers = 3,
 	.irq_reg_set = vfe480_top_irq_reg_set,
-	.global_clear_offset  = 0x00000038,
-	.global_clear_bitmask = 0x00000001,
-	.clear_all_bitmask = 0xFFFFFFFF,
+	.global_irq_cmd_offset = 0x00000038,
+	.global_clear_bitmask  = 0x00000001,
+	.clear_all_bitmask     = 0xFFFFFFFF,
 };
 
 static struct cam_vfe_camif_ver3_pp_clc_reg vfe480_camif_reg = {
@@ -424,7 +424,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe480_bus_hw_info = {
 		.irq_reg_info = {
 			.num_registers            = 2,
 			.irq_reg_set              = vfe480_bus_irq_reg,
-			.global_clear_offset      = 0x0000AA30,
+			.global_irq_cmd_offset    = 0x0000AA30,
 			.global_clear_bitmask     = 0x00000001,
 		},
 	},
@@ -1604,7 +1604,11 @@ static struct cam_vfe_bus_ver3_hw_info vfe480_bus_hw_info = {
 	},
 
 	.num_comp_grp    = 14,
-	.comp_done_shift = 6,
+	.comp_done_mask = {
+		BIT(6), BIT(7), BIT(8), BIT(9), BIT(10),
+		BIT(11), BIT(12), BIT(13), BIT(14),
+		BIT(15), BIT(16), BIT(17), BIT(18), BIT(19),
+	},
 	.top_irq_shift   = 7,
 	.support_consumed_addr = true,
 	.max_out_res = CAM_ISP_IFE_OUT_RES_BASE + 25,
@@ -1631,11 +1635,11 @@ static struct cam_vfe_bus_rd_ver1_hw_info vfe480_bus_rd_hw_info = {
 		.input_if_cmd                 = 0x0000A820,
 		.test_bus_ctrl                = 0x0000A848,
 		.irq_reg_info = {
-			.num_registers        = 1,
-			.irq_reg_set          = vfe480_bus_rd_irq_reg,
-			.global_clear_offset  = 0x0000A818,
-			.global_clear_bitmask = 0x00000001,
-			.clear_all_bitmask = 0xFFFFFFFF,
+			.num_registers         = 1,
+			.irq_reg_set           = vfe480_bus_rd_irq_reg,
+			.global_irq_cmd_offset = 0x0000A818,
+			.global_clear_bitmask  = 0x00000001,
+			.clear_all_bitmask     = 0xFFFFFFFF,
 		},
 	},
 	.num_client = 1,

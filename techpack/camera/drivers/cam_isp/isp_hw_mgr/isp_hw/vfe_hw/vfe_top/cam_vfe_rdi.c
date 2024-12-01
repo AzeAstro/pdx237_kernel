@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -273,10 +274,10 @@ int cam_vfe_rdi_ver2_acquire_resource(
 	rdi_data     = (struct cam_vfe_mux_rdi_data *)rdi_res->res_priv;
 	acquire_data = (struct cam_vfe_acquire_args *)acquire_param;
 
-	rdi_data->event_cb    = acquire_data->event_cb;
-	rdi_data->priv        = acquire_data->priv;
-	rdi_data->sync_mode   = acquire_data->vfe_in.sync_mode;
-	rdi_res->rdi_only_ctx = 0;
+	rdi_data->event_cb          = acquire_data->event_cb;
+	rdi_data->priv              = acquire_data->priv;
+	rdi_data->sync_mode         = acquire_data->vfe_in.sync_mode;
+	rdi_res->is_rdi_primary_res = false;
 
 	return 0;
 }
@@ -330,7 +331,7 @@ static int cam_vfe_rdi_resource_start(
 		}
 	}
 
-	if (!rdi_res->rdi_only_ctx)
+	if (!rdi_res->is_rdi_primary_res)
 		goto end;
 
 	rdi_irq_mask[0] =
@@ -572,7 +573,7 @@ static int cam_vfe_rdi_handle_irq_bottom_half(void *handler_priv,
 			rdi_priv->event_cb(rdi_priv->priv,
 			CAM_ISP_HW_EVENT_ERROR,
 			(void *)&evt_info);
-		cam_cpas_log_votes();
+		cam_cpas_log_votes(false);
 	}
 end:
 	cam_vfe_rdi_put_evt_payload(rdi_priv, &payload);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -14,11 +14,12 @@
 #include "cam_sfe_soc.h"
 #include "cam_sfe680.h"
 #include "cam_sfe780.h"
+#include "cam_sfe880.h"
 #include "cam_debug_util.h"
 #include "camera_main.h"
 
 static struct cam_isp_hw_intf_data cam_sfe_hw_list[CAM_SFE_HW_NUM_MAX];
-static uint32_t g_num_sfe_hws;
+static uint32_t cam_num_sfes;
 
 static int cam_sfe_component_bind(struct device *dev,
 	struct device *master_dev, void *data)
@@ -36,11 +37,7 @@ static int cam_sfe_component_bind(struct device *dev,
 
 	pdev = to_platform_device(dev);
 
-	rc = of_property_read_u32(pdev->dev.of_node, "cell-index", &sfe_dev_idx);
-	if (rc) {
-		CAM_ERR(CAM_SFE, "Failed to read cell-index of SFE HW, rc: %d", rc);
-		goto end;
-	}
+	of_property_read_u32(pdev->dev.of_node, "cell-index", &sfe_dev_idx);
 
 	if (!cam_cpas_is_feature_supported(CAM_CPAS_SFE_FUSE, BIT(sfe_dev_idx), NULL)) {
 		CAM_DBG(CAM_SFE, "SFE:%d is not supported", sfe_dev_idx);
@@ -75,6 +72,7 @@ static int cam_sfe_component_bind(struct device *dev,
 	sfe_hw_intf->hw_ops.read = cam_sfe_read;
 	sfe_hw_intf->hw_ops.write = cam_sfe_write;
 	sfe_hw_intf->hw_ops.process_cmd = cam_sfe_process_cmd;
+	sfe_hw_intf->hw_ops.test_irq_line = cam_sfe_test_irq_line;
 	sfe_hw_intf->hw_type = CAM_ISP_HW_TYPE_SFE;
 
 	CAM_DBG(CAM_SFE, "SFE component bind type %d index %d",
@@ -173,14 +171,12 @@ static void cam_sfe_component_unbind(struct device *dev,
 	sfe_info = sfe_hw_intf->hw_priv;
 	if (!sfe_info) {
 		CAM_ERR(CAM_SFE, "HW data is NULL");
-		rc = -ENODEV;
 		goto free_sfe_hw_intf;
 	}
 
 	core_info = (struct cam_sfe_hw_core_info *)sfe_info->core_info;
 	if (!core_info) {
 		CAM_ERR(CAM_SFE, "core data NULL");
-		rc = -EINVAL;
 		goto deinit_soc;
 	}
 
@@ -209,12 +205,12 @@ const static struct component_ops cam_sfe_component_ops = {
 	.unbind = cam_sfe_component_unbind,
 };
 
-void cam_sfe_get_num_hws(uint32_t *sfe_num)
+void cam_sfe_get_num_sfes(uint32_t *sfe_num)
 {
 	if (sfe_num)
-		*sfe_num = g_num_sfe_hws;
+		*sfe_num = cam_num_sfes;
 	else
-		CAM_ERR(CAM_SFE, "Invalid argument, g_num_sfe_hws: %u", g_num_sfe_hws);
+		CAM_ERR(CAM_SFE, "Failed to update number of SFEs");
 }
 
 int cam_sfe_probe(struct platform_device *pdev)
@@ -222,7 +218,7 @@ int cam_sfe_probe(struct platform_device *pdev)
 	int rc = 0;
 
 	CAM_DBG(CAM_SFE, "Adding SFE component");
-	g_num_sfe_hws++;
+	cam_num_sfes++;
 
 	rc = component_add(&pdev->dev, &cam_sfe_component_ops);
 	if (rc)
@@ -260,6 +256,10 @@ static const struct of_device_id cam_sfe_dt_match[] = {
 	{
 		.compatible = "qcom,sfe780",
 		.data = &cam_sfe780_hw_info,
+	},
+	{
+		.compatible = "qcom,sfe880",
+		.data = &cam_sfe880_hw_info,
 	},
 	{}
 };

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_ISP_HW_H_
@@ -27,6 +27,16 @@
  * MAX len of ISP Resource Name
  */
 #define CAM_ISP_RES_NAME_LEN      16
+
+/* Access core_info of isp resource node */
+#define cam_isp_res_core_info(res) (((struct cam_hw_info *)res->hw_intf->hw_priv)->core_info)
+
+enum cam_isp_exposure_type {
+	CAM_ISP_LAST_EXPOSURE,
+	CAM_ISP_LAST_1_EXPOSURE,
+	CAM_ISP_LAST_2_EXPOSURE,
+	CAM_ISP_EXPOSURE_MAX
+};
 
 enum cam_isp_bw_control_action {
 	CAM_ISP_BW_CONTROL_EXCLUDE       = 0,
@@ -180,7 +190,7 @@ enum cam_isp_hw_cmd_type {
 	CAM_ISP_HW_CMD_TPG_CORE_CFG_CMD,
 	CAM_ISP_HW_CMD_CSID_CHANGE_HALT_MODE,
 	CAM_ISP_HW_CMD_SET_SFE_DEBUG_CFG,
-	CAM_ISP_HW_CMD_QUERY_BUS_CAP,
+	CAM_ISP_HW_CMD_QUERY_CAP,
 	CAM_IFE_CSID_CMD_GET_TIME_STAMP,
 	CAM_IFE_CSID_SET_CSID_DEBUG,
 	CAM_IFE_CSID_SOF_IRQ_DEBUG,
@@ -188,6 +198,7 @@ enum cam_isp_hw_cmd_type {
 	CAM_IFE_CSID_TOP_CONFIG,
 	CAM_IFE_CSID_PROGRAM_OFFLINE_CMD,
 	CAM_IFE_CSID_SET_DUAL_SYNC_CONFIG,
+	CAM_IFE_CSID_RESET_OUT_OF_SYNC_CNT,
 	CAM_ISP_HW_CMD_CSID_DYNAMIC_SWITCH_UPDATE,
 	CAM_ISP_HW_CMD_CSID_DISCARD_INIT_FRAMES,
 	CAM_ISP_HW_CMD_BUF_UPDATE,
@@ -195,7 +206,7 @@ enum cam_isp_hw_cmd_type {
 	CAM_ISP_HW_NOTIFY_OVERFLOW,
 	CAM_ISP_HW_CMD_IS_PDAF_RDI2_MUX_EN,
 	CAM_ISP_HW_CMD_GET_PATH_PORT_MAP,
-	CAM_ISP_HW_CMD_IFE_BUS_DEBUG_CFG,
+	CAM_ISP_HW_CMD_IFE_DEBUG_CFG,
 	CAM_ISP_HW_SFE_SYS_CACHE_WM_CONFIG,
 	CAM_ISP_HW_SFE_SYS_CACHE_RM_CONFIG,
 	CAM_ISP_HW_CMD_WM_BW_LIMIT_CONFIG,
@@ -206,7 +217,11 @@ enum cam_isp_hw_cmd_type {
 	CAM_ISP_HW_BUS_MINI_DUMP,
 	CAM_ISP_HW_USER_DUMP,
 	CAM_ISP_HW_CMD_RDI_LCR_CFG,
+	CAM_ISP_HW_CMD_DRV_CONFIG,
 	CAM_ISP_HW_CMD_DYNAMIC_CLOCK_UPDATE,
+	CAM_ISP_HW_CMD_SET_SYNC_HW_IDX,
+	CAM_ISP_HW_CMD_BUS_WM_DISABLE,
+	CAM_ISP_HW_CMD_BUFFER_ALIGNMENT_UPDATE,
 	CAM_ISP_HW_CMD_MAX,
 };
 
@@ -227,7 +242,6 @@ enum cam_isp_hw_cmd_type {
  * @tasklet_info:                 Tasklet structure that will be used to
  *                                schedule IRQ events related to this resource
  * @irq_handle:                   handle returned on subscribing for IRQ event
- * @rdi_only_ctx:                 resource belong to rdi only context or not
  * @init:                         function pointer to init the HW resource
  * @deinit:                       function pointer to deinit the HW resource
  * @start:                        function pointer to start the HW resource
@@ -237,6 +251,8 @@ enum cam_isp_hw_cmd_type {
  * @top_half_handler:             Top Half handler function
  * @bottom_half_handler:          Bottom Half handler function
  * @res_name:                     Name of resource
+ * @is_rdi_primary_res:           Indicates whether RDI is primiary resource or not.
+ *                                Based on this, We need to enable interrupts on RDI path only.
  */
 struct cam_isp_resource_node {
 	enum cam_isp_resource_type     res_type;
@@ -248,7 +264,6 @@ struct cam_isp_resource_node {
 	void                          *cdm_ops;
 	void                          *tasklet_info;
 	int                            irq_handle;
-	int                            rdi_only_ctx;
 
 	int (*init)(struct cam_isp_resource_node *rsrc_node,
 		void *init_args, uint32_t arg_size);
@@ -261,6 +276,7 @@ struct cam_isp_resource_node {
 	CAM_IRQ_HANDLER_TOP_HALF       top_half_handler;
 	CAM_IRQ_HANDLER_BOTTOM_HALF    bottom_half_handler;
 	uint8_t                        res_name[CAM_ISP_RES_NAME_LEN];
+	bool                           is_rdi_primary_res;
 };
 
 /*
@@ -290,19 +306,19 @@ struct cam_isp_hw_error_event_info {
 };
 
 /**
- * struct cam_isp_hw_bufdone_event_info:
+ * struct cam_isp_hw_compdone_event_info:
  *
  * @brief:              Structure to pass bufdone event details to hw mgr
  *
+ * @num_res:            Number of valid resource IDs in this event
  * @res_id:             Resource IDs to report buf dones
- * @comp_grp_id:        Bus comp group id
  * @last_consumed_addr: Last consumed addr for resource ID at that index
  *
  */
-struct cam_isp_hw_bufdone_event_info {
-	uint32_t res_id;
-	uint32_t comp_grp_id;
-	uint32_t last_consumed_addr;
+struct cam_isp_hw_compdone_event_info {
+	uint32_t num_res;
+	uint32_t res_id[CAM_NUM_OUT_PER_COMP_IRQ_MAX];
+	uint32_t last_consumed_addr[CAM_NUM_OUT_PER_COMP_IRQ_MAX];
 };
 
 /*
@@ -385,11 +401,13 @@ struct cam_isp_hw_get_wm_update {
  * @Brief:           Get the out resource id for given mid
  *
  * @mid:             Mid number of hw outport numb
+ * @pid:             Pid number associated with mid
  * @out_res_id:      Out resource id
  *
  */
 struct cam_isp_hw_get_res_for_mid {
 	uint32_t                       mid;
+	uint32_t                       pid;
 	uint32_t                       out_res_id;
 };
 
@@ -407,6 +425,7 @@ struct cam_isp_hw_get_res_for_mid {
  * @cmd:             Command buffer information
  * @use_scratch_cfg: To indicate if it's scratch buffer config
  * @trigger_cdm_en:  Flag to indicate if cdm is trigger
+ * @reg_write:        if set use AHB to config rup/aup
  *
  */
 struct cam_isp_hw_get_cmd_update {
@@ -421,6 +440,7 @@ struct cam_isp_hw_get_cmd_update {
 		struct cam_isp_hw_get_wm_update      *rm_update;
 	};
 	bool trigger_cdm_en;
+	bool reg_write;
 };
 
 /*
@@ -477,6 +497,20 @@ struct cam_isp_hw_dump_header {
 };
 
 /**
+ * struct cam_isp_session_data - Session data
+ *
+ * @Brief:          ISP session or usecase data
+ *
+ * @link_hdl:       Link handle
+ * @is_shdr:        Indicate is usecase is shdr
+ *
+ */
+struct cam_isp_session_data {
+	int32_t   link_hdl;
+	bool      is_shdr;
+};
+
+/**
  * struct cam_isp_hw_intf_data - ISP hw intf data
  *
  * @Brief:        isp hw intf pointer and pid list data
@@ -496,13 +530,15 @@ struct cam_isp_hw_intf_data {
  *
  * @Brief:         ISP hw bus capabilities
  *
- * @support_consumed_addr:  Indicate whether HW has last consumed addr reg
  * @max_out_res_type:       Maximum value of out resource type supported by hw
+ * @num_perf_counters:      Number of perf counters supported
+ * @support_consumed_addr:  Indicate whether HW has last consumed addr reg
  *
  */
-struct cam_isp_hw_bus_cap {
-	bool                    support_consumed_addr;
+struct cam_isp_hw_cap {
 	uint32_t                max_out_res_type;
+	uint32_t                num_perf_counters;
+	bool                    support_consumed_addr;
 };
 
 /**
@@ -532,6 +568,19 @@ struct cam_isp_hw_path_port_map {
 struct cam_isp_hw_init_config_update {
 	struct cam_isp_resource_node   *node_res;
 	struct cam_isp_init_config     *init_config;
+};
+
+/*
+ * struct cam_isp_hw_overflow_info:
+ *
+ * @Brief:                  ISP hw bus overflow info
+ *
+ * @res_id:                 Resource type
+ * @is_bus_overflow:        Indicate whether bus overflow happened
+ */
+struct cam_isp_hw_overflow_info {
+	int                     res_id;
+	bool                    is_bus_overflow;
 };
 
 #endif /* _CAM_ISP_HW_H_ */

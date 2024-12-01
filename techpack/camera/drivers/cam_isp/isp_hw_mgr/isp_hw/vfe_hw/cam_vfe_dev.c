@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 
@@ -16,7 +16,7 @@
 #include <dt-bindings/msm-camera.h>
 
 static  struct cam_isp_hw_intf_data cam_vfe_hw_list[CAM_VFE_HW_NUM_MAX];
-static uint32_t g_num_ife_hws, g_num_ife_lite_hws;
+static uint32_t cam_num_ifes, cam_num_ife_lites;
 
 static int cam_vfe_component_bind(struct device *dev,
 	struct device *master_dev, void *data)
@@ -32,11 +32,7 @@ static int cam_vfe_component_bind(struct device *dev,
 	uint32_t  vfe_dev_idx;
 	uint32_t  i;
 
-	rc = of_property_read_u32(pdev->dev.of_node, "cell-index", &vfe_dev_idx);
-	if (rc) {
-		CAM_ERR(CAM_ISP, "Failed to read cell-index of IFE HW, rc: %d", rc);
-		goto end;
-	}
+	of_property_read_u32(pdev->dev.of_node, "cell-index", &vfe_dev_idx);
 
 	if (!cam_cpas_is_feature_supported(CAM_CPAS_ISP_FUSE, BIT(vfe_dev_idx), NULL) ||
 		!cam_cpas_is_feature_supported(CAM_CPAS_ISP_LITE_FUSE,
@@ -73,6 +69,7 @@ static int cam_vfe_component_bind(struct device *dev,
 	vfe_hw_intf->hw_ops.read = cam_vfe_read;
 	vfe_hw_intf->hw_ops.write = cam_vfe_write;
 	vfe_hw_intf->hw_ops.process_cmd = cam_vfe_process_cmd;
+	vfe_hw_intf->hw_ops.test_irq_line = cam_vfe_test_irq_line;
 	vfe_hw_intf->hw_type = CAM_ISP_HW_TYPE_VFE;
 
 	CAM_DBG(CAM_ISP, "VFE component bind, type %d index %d",
@@ -205,17 +202,17 @@ const static struct component_ops cam_vfe_component_ops = {
 void cam_vfe_get_num_ifes(uint32_t *num_ifes)
 {
 	if (num_ifes)
-		*num_ifes = g_num_ife_hws;
+		*num_ifes = cam_num_ifes;
 	else
-		CAM_ERR(CAM_ISP, "Invalid argument, g_num_ife_hws: %u", g_num_ife_hws);
+		CAM_ERR(CAM_ISP, "Failed to update number of IFEs");
 }
 
 void cam_vfe_get_num_ife_lites(uint32_t *num_ife_lites)
 {
 	if (num_ife_lites)
-		*num_ife_lites = g_num_ife_lite_hws;
+		*num_ife_lites = cam_num_ife_lites;
 	else
-		CAM_ERR(CAM_ISP, "Invalid argument, g_num_ife_lite_hws: %u", g_num_ife_lite_hws);
+		CAM_ERR(CAM_ISP, "Failed to update number of IFE-LITEs");
 }
 
 int cam_vfe_probe(struct platform_device *pdev)
@@ -234,11 +231,11 @@ int cam_vfe_probe(struct platform_device *pdev)
 			pdev->name, rc);
 
 	if (strnstr(compatible_name, "lite", strlen(compatible_name)) != NULL)
-		g_num_ife_lite_hws++;
+		cam_num_ife_lites++;
 	else if (strnstr(compatible_name, "vfe", strlen(compatible_name)) != NULL)
-		g_num_ife_hws++;
+		cam_num_ifes++;
 	else
-		CAM_ERR(CAM_ISP, "Failed to increment number of IFEs/IFE-LITEs");
+		CAM_ERR(CAM_ISP, "Failed to increement number of IFEs/IFE-LITEs");
 
 	rc = component_add(&pdev->dev, &cam_vfe_component_ops);
 	if (rc)

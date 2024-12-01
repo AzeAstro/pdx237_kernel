@@ -12,8 +12,8 @@
 #include "cam_ife_csid_lite17x.h"
 #include "cam_ife_csid_lite480.h"
 #include "cam_ife_csid_lite680.h"
-#include "cam_ife_csid_lite680_110.h"
 #include "cam_ife_csid_lite780.h"
+#include "cam_ife_csid_lite880.h"
 
 #define CAM_CSID_LITE_DRV_NAME                    "csid_lite"
 
@@ -32,13 +32,13 @@ static struct cam_ife_csid_core_info cam_ife_csid_lite_680_hw_info = {
 	.sw_version  = CAM_IFE_CSID_VER_2_0,
 };
 
-static struct cam_ife_csid_core_info cam_ife_csid_lite_680_110_hw_info = {
-	.csid_reg = &cam_ife_csid_lite_680_110_reg_info,
+static struct cam_ife_csid_core_info cam_ife_csid_lite_780_hw_info = {
+	.csid_reg = &cam_ife_csid_lite_780_reg_info,
 	.sw_version  = CAM_IFE_CSID_VER_2_0,
 };
 
-static struct cam_ife_csid_core_info cam_ife_csid_lite_780_hw_info = {
-	.csid_reg = &cam_ife_csid_lite_780_reg_info,
+static struct cam_ife_csid_core_info cam_ife_csid_lite_880_hw_info = {
+	.csid_reg = &cam_ife_csid_lite_880_reg_info,
 	.sw_version  = CAM_IFE_CSID_VER_2_0,
 };
 
@@ -73,11 +73,15 @@ static const struct of_device_id cam_ife_csid_lite_dt_match[] = {
 	},
 	{
 		.compatible = "qcom,csid-lite680_110",
-		.data = &cam_ife_csid_lite_680_110_hw_info,
+		.data = &cam_ife_csid_lite_680_hw_info,
 	},
 	{
 		.compatible = "qcom,csid-lite780",
 		.data = &cam_ife_csid_lite_780_hw_info,
+	},
+	{
+		.compatible = "qcom,csid-lite880",
+		.data = &cam_ife_csid_lite_880_hw_info,
 	},
 	{}
 };

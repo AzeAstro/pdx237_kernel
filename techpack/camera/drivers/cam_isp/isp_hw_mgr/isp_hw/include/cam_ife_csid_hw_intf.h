@@ -14,6 +14,15 @@
 #define CAM_IFE_CSID_HW_NUM_MAX                        8
 #define CAM_IFE_CSID_UDI_MAX                           3
 #define RT_BASE_IDX                                    2
+#define CAM_ISP_MAX_PATHS                              8
+
+/**
+ * enum cam_ife_csid_hw_irq_regs - Specify the top irq reg
+ */
+enum cam_ife_csid_hw_irq_regs {
+	CAM_IFE_CSID_IRQ_TOP_REG_STATUS0,
+	CAM_IFE_CSID_IRQ_REGISTERS_MAX,
+};
 
 /**
  * enum cam_ife_csid_input_core_type - Specify the csid input core
@@ -67,16 +76,17 @@ enum cam_ife_csid_secondary_evt_type {
 
 /**
  * struct cam_ife_csid_hw_caps- get the CSID hw capability
- * @num_rdis:             number of rdis supported by CSID HW device
- * @num_pix:              number of pxl paths supported by CSID HW device
- * @num_ppp:              number of ppp paths supported by CSID HW device
- * @major_version :       major version
- * @minor_version:        minor version
- * @version_incr:         version increment
- * @is_lite:              is the ife_csid lite
- * @global_reset_en:      flag to indicate if global reset is enabled
- * @rup_en:               flag to indicate if rup is on csid side
- * @only_master_rup:      flag to indicate if only master RUP
+ * @num_rdis:              number of rdis supported by CSID HW device
+ * @num_pix:               number of pxl paths supported by CSID HW device
+ * @num_ppp:               number of ppp paths supported by CSID HW device
+ * @major_version :        major version
+ * @minor_version:         minor version
+ * @version_incr:          version increment
+ * @sfe_ipp_input_rdi_res: RDI Res as an input to SFE
+ * @is_lite:               is the ife_csid lite
+ * @global_reset_en:       flag to indicate if global reset is enabled
+ * @rup_en:                flag to indicate if rup is on csid side
+ * @only_master_rup:       flag to indicate if only master RUP
  * @camif_irq_support:     flag to indicate if CSID supports CAMIF irq
  */
 struct cam_ife_csid_hw_caps {
@@ -86,6 +96,7 @@ struct cam_ife_csid_hw_caps {
 	uint32_t      major_version;
 	uint32_t      minor_version;
 	uint32_t      version_incr;
+	uint32_t      sfe_ipp_input_rdi_res;
 	bool          is_lite;
 	bool          global_reset_en;
 	bool          rup_en;
@@ -153,6 +164,7 @@ struct cam_isp_in_port_generic_info {
 	bool                            sfe_binned_epoch_cfg;
 	bool                            epd_supported;
 	bool                            aeb_mode;
+	bool                            dynamic_hdr_switch_en;
 	struct cam_isp_out_port_generic_info    *data;
 };
 
@@ -160,13 +172,11 @@ struct cam_isp_in_port_generic_info {
  * struct cam_csid_secondary_evt_config - secondary event enablement
  * @evt_type:           Type of secondary event enabled [SOF/EPOCH/EOF...]
  * @en_secondary_evt:   Enable secondary event
- * @handle_camif_irq:    Flag to indicate if CSID IRQ is enabled
  *
  */
 struct cam_csid_secondary_evt_config {
 	enum cam_ife_csid_secondary_evt_type evt_type;
 	bool                                 en_secondary_evt;
-	bool                                 handle_camif_irq;
 };
 
 /**
@@ -199,11 +209,8 @@ struct cam_csid_secondary_evt_config {
  * @event_cb:            Callback function to hw mgr in case of hw events
  * @phy_sel:             Phy selection number if tpg is enabled from userspace
  * @cb_priv:             Private pointer to return to callback
- * @can_use_lite:        Flag to indicate if current call qualifies for
- *                       acquire lite
  * @sfe_en:              Flag to indicate if SFE is enabled
  * @use_wm_pack:         [OUT]Flag to indicate if WM packing is to be used for packing
- * @secure_mode:         Holds secure mode state of the CSID
  * @handle_camif_irq:    Flag to indicate if CSID IRQ is enabled
  *
  */
@@ -228,10 +235,8 @@ struct cam_csid_hw_reserve_resource_args {
 	cam_hw_mgr_event_cb_func                  event_cb;
 	uint32_t                                  phy_sel;
 	void                                     *cb_priv;
-	bool                                      can_use_lite;
 	bool                                      sfe_en;
 	bool                                      use_wm_pack;
-	bool                                      secure_mode;
 	bool                                      handle_camif_irq;
 };
 
@@ -289,9 +294,22 @@ struct cam_csid_hw_stop_args {
 	uint32_t                                  num_res;
 };
 
+/**
+ * struct cam_csid_hw_start_args - Relevant info to pass from ife_hw_mgr layer
+ *                                 to start various resource nodes.
+ *
+ * @node_res:           Resource pointer array (cid or CSID)
+ * @num_res:            Number of resources in node_res
+ * @cdm_hw_idx:         Physical CDM in use together with these resources
+ * @is_secure:          If these resources are run in secure session
+ * @is_internal_start:  Start triggered internally for reset & recovery
+ *
+ */
 struct cam_csid_hw_start_args {
 	struct cam_isp_resource_node            **node_res;
 	uint32_t                                  num_res;
+	uint32_t                                  cdm_hw_idx;
+	bool                                      is_secure;
 	bool                                      is_internal_start;
 };
 
@@ -313,6 +331,15 @@ enum cam_ife_csid_reset_type {
  */
 struct cam_csid_reset_cfg_args {
 	enum cam_ife_csid_reset_type   reset_type;
+	struct cam_isp_resource_node  *node_res;
+};
+
+/**
+ * struct cam_csid_reset_out_of_sync_count_args
+ * @res_node :   resource need to be reset
+ *
+ */
+struct cam_csid_reset_out_of_sync_count_args {
 	struct cam_isp_resource_node  *node_res;
 };
 
@@ -467,6 +494,36 @@ struct cam_ife_csid_mode_switch_update_args {
 struct cam_ife_csid_discard_init_frame_args {
 	uint32_t                          num_frames;
 	struct cam_isp_resource_node     *res;
+};
+
+/*
+ * struct cam_ife_csid_debug_cfg_args:
+ *
+ * @csid_debug: CSID debug val
+ * @csid_rx_capture_debug: CSID rx capture debug val
+ * @csid_testbus_debug: CSID test bus val
+ * @rx_capture_debug_set: CSID rx capture debug set;
+ */
+struct cam_ife_csid_debug_cfg_args {
+	uint64_t                          csid_debug;
+	uint32_t                          csid_rx_capture_debug;
+	uint32_t                          csid_testbus_debug;
+	bool                              rx_capture_debug_set;
+};
+
+/*
+ * struct cam_ife_csid_drv_config_args:
+ *
+ * @is_init_config: Indicator for init config
+ * @drv_en:         Indicator for camera DRV enable
+ * @timeout_val:    Timeout value from SOF to trigger up vote, given in number of GC cycles
+ * @path_idle_en:   Mask for paths to be considered for consolidated IDLE
+ */
+struct cam_ife_csid_drv_config_args {
+	bool                               is_init_config;
+	bool                               drv_en;
+	uint32_t                           timeout_val;
+	uint32_t                           path_idle_en;
 };
 
 #endif /* _CAM_CSID_HW_INTF_H_ */

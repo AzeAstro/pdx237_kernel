@@ -20,8 +20,9 @@
 #define CAM_SHIFT_TOP_CORE_CFG_OPS_MODE_CFG    1
 #define CAM_SHIFT_TOP_CORE_CFG_FS_MODE_CFG     0
 
-#define CAM_SFE_TOP_DBG_REG_MAX                18
+#define CAM_SFE_TOP_DBG_REG_MAX                20
 #define CAM_SFE_TOP_TESTBUS_MAX                 2
+#define CAM_SFE_PERF_COUNTER_MAX                2
 
 struct cam_sfe_top_module_desc {
 	uint32_t id;
@@ -68,6 +69,15 @@ struct cam_sfe_testbus_info {
 	struct cam_sfe_top_cc_testbus_info *testbus;
 };
 
+struct cam_sfe_top_perf_count_reg_offset {
+	uint32_t perf_count_cfg;
+	uint32_t perf_pix_count;
+	uint32_t perf_line_count;
+	uint32_t perf_stall_count;
+	uint32_t perf_always_count;
+	uint32_t perf_count_status;
+};
+
 struct cam_sfe_top_common_reg_offset {
 	uint32_t hw_version;
 	uint32_t hw_capability;
@@ -90,6 +100,9 @@ struct cam_sfe_top_common_reg_offset {
 	uint32_t irc_throttle_cfg;
 	uint32_t sfe_single_dual_cfg;
 	uint32_t bus_overflow_status;
+	uint32_t num_perf_counters;
+	struct cam_sfe_top_perf_count_reg_offset
+		perf_count_reg[CAM_SFE_PERF_COUNTER_MAX];
 	uint32_t top_debug_cfg;
 	uint32_t top_cc_test_bus_ctrl;
 	bool     lcr_supported;
@@ -99,6 +112,7 @@ struct cam_sfe_top_common_reg_offset {
 	uint32_t num_sfe_mode;
 	uint32_t ipp_violation_mask;
 	uint32_t top_debug_testbus_reg;
+	uint32_t top_debug_nonccif_regstart_idx;
 	uint32_t top_cc_test_bus_supported;
 	uint32_t num_debug_registers;
 	uint32_t top_debug[CAM_SFE_TOP_DBG_REG_MAX];
@@ -141,11 +155,9 @@ struct cam_sfe_top_hw_info {
 	uint32_t                                  num_top_errors;
 	struct cam_sfe_top_err_irq_desc          *top_err_desc;
 	uint32_t                                  num_clc_module;
-	struct   cam_sfe_top_debug_info         (*clc_dbg_mod_info)[CAM_SFE_TOP_DBG_REG_MAX][8];
+	struct cam_sfe_top_debug_info           (*clc_dbg_mod_info)[CAM_SFE_TOP_DBG_REG_MAX][8];
 	uint32_t                                  num_of_testbus;
 	struct cam_sfe_testbus_info               test_bus_info[CAM_SFE_TOP_TESTBUS_MAX];
-	uint32_t                                  num_bus_wr_errors;
-	struct cam_sfe_bus_wr_err_irq_desc       *bus_wr_err_desc;
 };
 
 int cam_sfe_top_init(

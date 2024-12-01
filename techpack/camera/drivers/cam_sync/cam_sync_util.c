@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2018, 2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_sync_util.h"
@@ -27,48 +27,6 @@ int cam_sync_util_find_and_set_empty_row(struct sync_device *sync_dev,
 	return rc;
 }
 
-int cam_sync_init_wait_ref(uint32_t sync_obj)
-{
-	struct sync_table_row *row = NULL;
-
-	row = sync_dev->sync_table + sync_obj;
-
-	refcount_set(&row->wait_ref_cnt, 1);
-	return 0;
-}
-
-int cam_sync_get_wait_ref(uint32_t sync_obj)
-{
-	struct sync_table_row *row = NULL;
-
-	row = sync_dev->sync_table + sync_obj;
-
-	if (row->state == CAM_SYNC_STATE_INVALID) {
-		CAM_ERR(CAM_SYNC,
-			"Error: accessing an uninitialized sync obj = %d",
-			sync_obj);
-		return -EINVAL;
-	}
-	if (!refcount_inc_not_zero(&row->wait_ref_cnt))
-		return -EINVAL;
-
-	CAM_DBG(CAM_SYNC, "get ref for obj %d", sync_obj);
-	return 0;
-}
-
-int cam_sync_put_wait_ref(uint32_t sync_obj)
-{
-	struct sync_table_row *row = NULL;
-
-	row = sync_dev->sync_table + sync_obj;
-	if (refcount_dec_and_test(&row->wait_ref_cnt))
-		cam_sync_deinit_object(sync_dev->sync_table, sync_obj);
-
-	CAM_DBG(CAM_SYNC, "put ref for obj %d", sync_obj);
-
-	return 0;
-}
-
 int cam_sync_init_row(struct sync_table_row *table,
 	uint32_t idx, const char *name, uint32_t type)
 {
@@ -90,7 +48,6 @@ int cam_sync_init_row(struct sync_table_row *table,
 	init_completion(&row->signaled);
 	INIT_LIST_HEAD(&row->callback_list);
 	INIT_LIST_HEAD(&row->user_payload_list);
-	cam_sync_init_wait_ref(idx);
 	CAM_DBG(CAM_SYNC,
 		"row name:%s sync_id:%i [idx:%u] row_state:%u ",
 		row->name, row->sync_id, idx, row->state);
@@ -191,7 +148,8 @@ clean_children_info:
 	return rc;
 }
 
-int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx)
+int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx,
+	struct cam_sync_check_for_dma_release *check_for_dma_release)
 {
 	struct sync_table_row      *row = table + idx;
 	struct sync_child_info     *child_info, *temp_child;
@@ -209,6 +167,21 @@ int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx)
 		row->name, row->sync_id, idx, row->state);
 
 	spin_lock_bh(&sync_dev->row_spinlocks[idx]);
+	if (row->state == CAM_SYNC_STATE_INVALID) {
+		spin_unlock_bh(&sync_dev->row_spinlocks[idx]);
+		CAM_ERR(CAM_SYNC,
+			"Error: accessing an uninitialized sync obj: idx = %d name = %s",
+			idx,
+			row->name);
+		return -EINVAL;
+	}
+
+	if (row->state == CAM_SYNC_STATE_ACTIVE)
+		CAM_DBG(CAM_SYNC,
+			"Destroying an active sync object name:%s id:%i",
+			row->name, row->sync_id);
+
+	row->state = CAM_SYNC_STATE_INVALID;
 
 	/* Object's child and parent objects will be added into this list */
 	INIT_LIST_HEAD(&temp_child_list);
@@ -297,23 +270,30 @@ int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx)
 	spin_lock_bh(&sync_dev->row_spinlocks[idx]);
 	list_for_each_entry_safe(upayload_info, temp_upayload,
 			&row->user_payload_list, list) {
-		cam_sync_util_send_v4l2_event(
-			CAM_SYNC_V4L_EVENT_ID_CB_TRIG,
-			idx,
-			CAM_SYNC_STATE_SIGNALED_CANCEL,
-			upayload_info->payload_data,
-			CAM_SYNC_PAYLOAD_WORDS * sizeof(__u64),
-			CAM_SYNC_COMMON_SYNC_SIGNAL_EVENT);
 		list_del_init(&upayload_info->list);
 		kfree(upayload_info);
 	}
 
 	list_for_each_entry_safe(sync_cb, temp_cb,
 			&row->callback_list, list) {
-		sync_cb->status = CAM_SYNC_STATE_SIGNALED_CANCEL;
 		list_del_init(&sync_cb->list);
-		queue_work(sync_dev->work_queue,
-			&sync_cb->cb_dispatch_work);
+		kfree(sync_cb);
+	}
+
+	/* Decrement ref cnt for imported dma fence */
+	if (test_bit(CAM_GENERIC_FENCE_TYPE_DMA_FENCE, &row->ext_fence_mask)) {
+		cam_dma_fence_get_put_ref(false, row->dma_fence_info.dma_fence_row_idx);
+
+		/* Check if same dma fence is being released with the sync obj */
+		if (check_for_dma_release) {
+			if (row->dma_fence_info.dma_fence_fd ==
+				check_for_dma_release->dma_fence_fd) {
+				check_for_dma_release->sync_created_with_dma =
+					row->dma_fence_info.sync_created_with_dma;
+				check_for_dma_release->dma_fence_row_idx =
+					row->dma_fence_info.dma_fence_row_idx;
+			}
+		}
 	}
 
 	memset(row, 0, sizeof(*row));
@@ -333,9 +313,10 @@ void cam_sync_util_cb_dispatch(struct work_struct *cb_dispatch_work)
 		struct sync_callback_info,
 		cb_dispatch_work);
 	sync_callback sync_data = cb_info->callback_func;
+	void *cb = cb_info->callback_func;
 
 	cam_common_util_thread_switch_delay_detect(
-		"CAM-SYNC workq schedule",
+		"cam_sync_workq", "schedule", cb,
 		cb_info->workq_scheduled_ts,
 		CAM_WORKQ_SCHEDULE_TIME_THRESHOLD);
 	sync_data(cb_info->sync_obj, cb_info->status, cb_info->cb_data);

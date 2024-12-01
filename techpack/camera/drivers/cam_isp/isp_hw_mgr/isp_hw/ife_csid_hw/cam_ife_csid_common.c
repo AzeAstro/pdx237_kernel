@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/iopoll.h>
@@ -24,6 +24,9 @@
 #include "cam_ife_csid_hw_ver1.h"
 #include "cam_ife_csid_hw_ver2.h"
 #include "cam_cdm_intf_api.h"
+
+/* factor to conver qtime to boottime */
+int64_t qtime_to_boottime;
 
 const uint8_t *cam_ife_csid_irq_reg_tag[CAM_IFE_CSID_IRQ_REG_MAX] = {
 	"TOP",
@@ -494,13 +497,13 @@ int cam_ife_csid_cid_reserve(struct cam_ife_csid_cid_data *cid_data,
 	}
 
 	if (i == CAM_IFE_CSID_CID_MAX) {
-		for (j = 0; j < reserve->in_port->num_valid_vc_dt; j++) {
+		for (j = 0; j < reserve->in_port->num_valid_vc_dt; j++)
 			CAM_ERR(CAM_ISP,
 				"CSID[%d] reserve fail vc[%d] dt[%d]",
 				hw_idx, reserve->in_port->vc[j],
 				reserve->in_port->dt[j]);
-			return -EINVAL;
-		}
+
+		return -EINVAL;
 	}
 
 	cid_data[i].cid_cnt++;
@@ -540,7 +543,7 @@ int cam_ife_csid_check_in_port_args(
 	uint32_t hw_idx)
 {
 
-	if (reserve->in_port->res_type >= CAM_ISP_IFE_IN_RES_MAX) {
+	if (reserve->in_port->res_type >= CAM_IFE_CSID_IN_RES_MAX) {
 
 		CAM_ERR(CAM_ISP, "CSID:%d  Invalid phy sel %d",
 			hw_idx, reserve->in_port->res_type);

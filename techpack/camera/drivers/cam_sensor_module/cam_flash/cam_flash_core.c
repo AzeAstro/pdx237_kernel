@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -12,80 +12,6 @@
 #include "cam_common_util.h"
 #include "cam_packet_util.h"
 
-static int cam_flash_prepare(struct cam_flash_ctrl *flash_ctrl,
-	bool regulator_enable)
-{
-	int rc = 0;
-	struct cam_flash_private_soc *soc_private =
-		(struct cam_flash_private_soc *)
-		flash_ctrl->soc_info.soc_private;
-	if (!(flash_ctrl->switch_trigger)) {
-		CAM_ERR(CAM_FLASH, "Invalid argument");
-		return -EINVAL;
-	}
-	if (soc_private->is_wled_flash) {
-#if IS_REACHABLE(CONFIG_BACKLIGHT_QCOM_SPMI_WLED)
-		if (regulator_enable &&
-			flash_ctrl->is_regulator_enabled == false) {
-			rc = wled_flash_led_prepare(flash_ctrl->switch_trigger,
-				ENABLE_REGULATOR, NULL);
-			if (rc) {
-				CAM_ERR(CAM_FLASH, "enable reg failed: rc: %d",
-					rc);
-				return rc;
-			}
-			flash_ctrl->is_regulator_enabled = true;
-		} else if (!regulator_enable &&
-				flash_ctrl->is_regulator_enabled == true) {
-			rc = wled_flash_led_prepare(flash_ctrl->switch_trigger,
-				DISABLE_REGULATOR, NULL);
-			if (rc) {
-				CAM_ERR(CAM_FLASH, "disalbe reg fail: rc: %d",
-					rc);
-				return rc;
-			}
-			flash_ctrl->is_regulator_enabled = false;
-		} else {
-			CAM_ERR(CAM_FLASH, "Wrong Wled flash state: %d",
-				flash_ctrl->flash_state);
-			rc = -EINVAL;
-		}
-#else
-	return -EPERM;
-#endif
-	} else {
-#if IS_REACHABLE(CONFIG_LEDS_QPNP_FLASH_V2)
-		if (regulator_enable &&
-			(flash_ctrl->is_regulator_enabled == false)) {
-			rc = qpnp_flash_led_prepare(flash_ctrl->switch_trigger,
-				ENABLE_REGULATOR, NULL);
-			if (rc) {
-				CAM_ERR(CAM_FLASH,
-					"Regulator enable failed rc = %d", rc);
-				return rc;
-			}
-			flash_ctrl->is_regulator_enabled = true;
-		} else if (!regulator_enable &&
-				flash_ctrl->is_regulator_enabled == true) {
-			rc = qpnp_flash_led_prepare(flash_ctrl->switch_trigger,
-				DISABLE_REGULATOR, NULL);
-			if (rc) {
-				CAM_ERR(CAM_FLASH,
-					"Regulator disable failed rc = %d", rc);
-				return rc;
-			}
-			flash_ctrl->is_regulator_enabled = false;
-		} else {
-			CAM_ERR(CAM_FLASH, "Wrong Flash State : %d",
-				flash_ctrl->flash_state);
-			rc = -EINVAL;
-		}
-#else
-	return -EPERM;
-#endif
-	}
-	return rc;
-}
 int cam_flash_led_prepare(struct led_trigger *trigger, int options,
 	int *max_current, bool is_wled)
 {
@@ -214,39 +140,6 @@ free_power_settings:
 	return rc;
 }
 
-int cam_flash_pmic_power_ops(struct cam_flash_ctrl *fctrl,
-	bool regulator_enable)
-{
-	int rc = 0;
-
-	if (!(fctrl->switch_trigger)) {
-		CAM_ERR(CAM_FLASH, "Invalid argument");
-		return -EINVAL;
-	}
-
-	if (regulator_enable) {
-		rc = cam_flash_prepare(fctrl, true);
-		if (rc) {
-			CAM_ERR(CAM_FLASH,
-				"Enable Regulator Failed rc = %d", rc);
-			return rc;
-		}
-		fctrl->last_flush_req = 0;
-	}
-
-	if (!regulator_enable) {
-		if ((fctrl->flash_state == CAM_FLASH_STATE_ACQUIRE) &&
-			(fctrl->is_regulator_enabled == true)) {
-			rc = cam_flash_prepare(fctrl, false);
-			if (rc)
-				CAM_ERR(CAM_FLASH,
-					"Disable Regulator Failed rc: %d", rc);
-		}
-	}
-
-	return rc;
-}
-
 int cam_flash_i2c_power_ops(struct cam_flash_ctrl *fctrl,
 	bool regulator_enable)
 {
@@ -276,7 +169,7 @@ int cam_flash_i2c_power_ops(struct cam_flash_ctrl *fctrl,
 			}
 		}
 
-		rc = cam_sensor_core_power_up(power_info, soc_info);
+		rc = cam_sensor_core_power_up(power_info, soc_info, NULL);
 		if (rc) {
 			CAM_ERR(CAM_FLASH, "power up the core is failed:%d",
 				rc);
@@ -1149,7 +1042,6 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 	if (!csl_packet->num_cmd_buf) {
 		CAM_ERR(CAM_FLASH, "Invalid num_cmd_buffer = %d",
 			csl_packet->num_cmd_buf);
-		cam_mem_put_cpu_buf(config.packet_handle);
 		return -EINVAL;
 	}
 
@@ -1161,7 +1053,7 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			"reject request %lld, last request to flush %lld",
 			csl_packet->header.request_id, fctrl->last_flush_req);
 		cam_mem_put_cpu_buf(config.packet_handle);
-		return -EINVAL;
+		return -EBADR;
 	}
 
 	if (csl_packet->header.request_id > fctrl->last_flush_req)
@@ -1181,11 +1073,6 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		/* INIT packet*/
 		/* Loop through multiple command buffers */
 		for (i = 1; i < csl_packet->num_cmd_buf; i++) {
-			rc = cam_packet_util_validate_cmd_desc(&cmd_desc[i]);
-			if (rc) {
-				cam_mem_put_cpu_buf(config.packet_handle);
-				return rc;
-			}
 			total_cmd_buf_in_bytes = cmd_desc[i].length;
 			processed_cmd_buf_in_bytes = 0;
 			if (!total_cmd_buf_in_bytes)
@@ -1393,8 +1280,8 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			rc = fctrl->func_tbl.apply_setting(fctrl, csl_req_id);
 			if (rc) {
 				CAM_ERR(CAM_FLASH, "cannot apply fire settings rc = %d", rc);
+				return rc;
 			}
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 		break;
@@ -1490,10 +1377,8 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		goto update_req_mgr;
 	}
 	case CAM_FLASH_PACKET_OPCODE_STREAM_OFF: {
-		if (fctrl->streamoff_count > 0) {
-			cam_mem_put_cpu_buf(config.packet_handle);
+		if (fctrl->streamoff_count > 0)
 			return rc;
-		}
 
 		CAM_DBG(CAM_FLASH, "Received Stream off Settings");
 		i2c_data = &(fctrl->i2c_data);
@@ -1510,7 +1395,6 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		if (rc) {
 			CAM_ERR(CAM_FLASH,
 			"Failed in parsing i2c Stream off packets");
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 		break;
@@ -1541,9 +1425,14 @@ update_req_mgr:
 			fctrl->bridge_intf.crm_cb->add_req) {
 			rc = fctrl->bridge_intf.crm_cb->add_req(&add_req);
 			if  (rc) {
-				CAM_ERR(CAM_FLASH,
-					"Failed in adding request: %llu to request manager",
-					csl_packet->header.request_id);
+				if (rc == -EBADR)
+					CAM_INFO(CAM_FLASH,
+						"Failed in adding request: %llu to request manager, it has been flushed",
+						csl_packet->header.request_id);
+				else
+					CAM_ERR(CAM_FLASH,
+						"Failed in adding request: %llu to request manager",
+						csl_packet->header.request_id);
 				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
@@ -1683,6 +1572,7 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			fctrl->flash_init_setting.cmn_attr.is_settings_valid =
 				true;
 			fctrl->flash_type = cam_flash_info->flash_type;
+			fctrl->is_regulator_enabled = false;
 			fctrl->nrt_info.cmn_attr.cmd_type =
 				CAMERA_SENSOR_FLASH_CMD_TYPE_INIT_INFO;
 
@@ -1787,10 +1677,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 
 		cmd_buf = (uint32_t *)((uint8_t *)cmd_buf_ptr +
 			cmd_desc->offset);
-		if (!cmd_buf) {
-			rc = -EINVAL;
-			return rc;
-		}
 		cmn_hdr = (struct common_header *)cmd_buf;
 
 		switch (cmn_hdr->cmd_type) {
@@ -2092,10 +1978,15 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		if (fctrl->bridge_intf.crm_cb &&
 			fctrl->bridge_intf.crm_cb->add_req) {
 			rc = fctrl->bridge_intf.crm_cb->add_req(&add_req);
-			if  (rc) {
-				CAM_ERR(CAM_FLASH,
-					"Failed in adding request: %llu to request manager",
-					csl_packet->header.request_id);
+			if (rc) {
+				if (rc == -EBADR)
+					CAM_INFO(CAM_FLASH,
+						"Failed in adding request: %llu to request manager, it has been flushed",
+						csl_packet->header.request_id);
+				else
+					CAM_ERR(CAM_FLASH,
+						"Failed in adding request: %llu to request manager",
+						csl_packet->header.request_id);
 				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
@@ -2113,7 +2004,8 @@ int cam_flash_publish_dev_info(struct cam_req_mgr_device_info *info)
 {
 	info->dev_id = CAM_REQ_MGR_DEVICE_FLASH;
 	strlcpy(info->name, CAM_FLASH_NAME, sizeof(info->name));
-	info->p_delay = CAM_FLASH_PIPELINE_DELAY;
+	info->p_delay = CAM_PIPELINE_DELAY_1;
+	info->m_delay = CAM_MODESWITCH_DELAY_1;
 	info->trigger = CAM_TRIGGER_POINT_SOF;
 	return 0;
 }

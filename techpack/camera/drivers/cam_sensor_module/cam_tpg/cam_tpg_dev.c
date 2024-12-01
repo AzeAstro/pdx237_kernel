@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_tpg_dev.h"
@@ -191,7 +192,13 @@ static int tpg_soc_info_init(struct cam_tpg_device *tpg_dev,
 		return rc;
 	}
 
-	rc = cam_soc_util_request_platform_resource(
+	if (!of_property_read_bool(of_node, "hw-no-ops"))
+		tpg_dev->hw_no_ops = false;
+	else
+		tpg_dev->hw_no_ops = true;
+
+	if (!tpg_dev->hw_no_ops)
+		rc = cam_soc_util_request_platform_resource(
 			&tpg_dev->soc_info,
 			cam_tpg_irq_handler,
 			tpg_dev);
@@ -267,6 +274,7 @@ static int cam_tpg_hw_layer_init(struct cam_tpg_device *tpg_dev,
 		tpg_dev->tpg_hw.vc_slots[i].stream_count =  0;
 		INIT_LIST_HEAD(&(tpg_dev->tpg_hw.vc_slots[i].head));
 	}
+	tpg_dev->tpg_hw.hw_info->layer_init(&tpg_dev->tpg_hw);
 
 	return 0;
 }
@@ -377,6 +385,10 @@ static const struct of_device_id cam_tpg_dt_match[] = {
 	{
 		.compatible = "qcom,cam-tpg103",
 		.data = &tpg_v_1_3_hw_info,
+	},
+	{
+		.compatible = "qcom,cam-tpg1031",
+		.data = &tpg_v_1_3_1_hw_info,
 	},
 	{}
 };

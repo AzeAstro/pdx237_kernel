@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_CPAS_API_H_
@@ -75,6 +75,8 @@ enum cam_cpas_camera_version {
 	CAM_CPAS_CAMERA_VERSION_165  = 0x00010605,
 	CAM_CPAS_CAMERA_VERSION_780  = 0x00070800,
 	CAM_CPAS_CAMERA_VERSION_640  = 0x00060400,
+	CAM_CPAS_CAMERA_VERSION_880  = 0x00080800,
+	CAM_CPAS_CAMERA_VERSION_770  = 0x00070700,
 	CAM_CPAS_CAMERA_VERSION_MAX
 };
 
@@ -111,6 +113,8 @@ enum cam_cpas_camera_version_map_id {
 	CAM_CPAS_CAMERA_VERSION_ID_165  = 0xA,
 	CAM_CPAS_CAMERA_VERSION_ID_780  = 0xB,
 	CAM_CPAS_CAMERA_VERSION_ID_640  = 0xC,
+	CAM_CPAS_CAMERA_VERSION_ID_880  = 0xD,
+	CAM_CPAS_CAMERA_VERSION_ID_770  = 0xE,
 	CAM_CPAS_CAMERA_VERSION_ID_MAX
 };
 
@@ -156,7 +160,24 @@ enum cam_cpas_hw_version {
 	CAM_CPAS_TITAN_780_V100 = 0x780100,
 	CAM_CPAS_TITAN_640_V200 = 0x640200,
 	CAM_CPAS_TITAN_640_V210 = 0x640210,
+	CAM_CPAS_TITAN_880_V100 = 0x880100,
+	CAM_CPAS_TITAN_770_V100 = 0x770100,
 	CAM_CPAS_TITAN_MAX
+};
+
+/**
+ * enum cam_camnoc_slave_error_codes - Enum for camnoc slave error codes
+ *
+ */
+enum cam_camnoc_slave_error_codes {
+	CAM_CAMNOC_TARGET_ERROR,
+	CAM_CAMNOC_ADDRESS_DECODE_ERROR,
+	CAM_CAMNOC_UNSUPPORTED_REQUEST_ERROR,
+	CAM_CAMNOC_DISCONNECTED_TARGET_ERROR,
+	CAM_CAMNOC_SECURITY_VIOLATION,
+	CAM_CAMNOC_HIDDEN_SECURITY_VIOLATION,
+	CAM_CAMNOC_TIME_OUT,
+	CAM_CAMNOC_UNUSED,
 };
 
 /**
@@ -232,17 +253,11 @@ enum cam_camnoc_irq_type {
 enum cam_sys_cache_config_types {
 	CAM_LLCC_SMALL_1 = 0,
 	CAM_LLCC_SMALL_2 = 1,
-	CAM_LLCC_MAX = 2,
-};
-
-/**
- * enum cam_subparts_index - Enum for camera subparts indices
- */
-enum cam_subparts_index {
-	CAM_IFE_HW_IDX,
-	CAM_IFE_LITE_HW_IDX,
-	CAM_SFE_HW_IDX,
-	CAM_CUSTOM_HW_IDX
+	CAM_LLCC_LARGE_1 = 2,
+	CAM_LLCC_LARGE_2 = 3,
+	CAM_LLCC_LARGE_3 = 4,
+	CAM_LLCC_LARGE_4 = 5,
+	CAM_LLCC_MAX     = 6,
 };
 
 /**
@@ -422,6 +437,17 @@ struct cam_cpas_irq_data {
 	} u;
 };
 
+/*
+ * CPAS client callback
+ *
+ * @client_handle : CPAS client handle
+ * @userdata      : User data given at the time of register
+ * @irq_data      : Event data
+ */
+typedef bool (*cam_cpas_client_cb_func)(
+	uint32_t client_handle, void *userdata,
+	struct cam_cpas_irq_data *irq_data);
+
 /**
  * struct cam_cpas_register_params : Register params for cpas client
  *
@@ -436,11 +462,7 @@ struct cam_cpas_irq_data {
  *                      an argument while callback.
  * @cam_cpas_callback : Input callback pointer for triggering the
  *                      callbacks from CPAS driver.
- *                      @client_handle : CPAS client handle
- *                      @userdata    : User data given at the time of register
- *                      @event_type  : event type
- *                      @event_data  : event data
- * @client_handle       : Output Unique handle generated for this register
+ * @client_handle     : Output Unique handle generated for this register
  *
  */
 struct cam_cpas_register_params {
@@ -448,10 +470,7 @@ struct cam_cpas_register_params {
 	uint32_t        cell_index;
 	struct device  *dev;
 	void           *userdata;
-	bool          (*cam_cpas_client_cb)(
-			uint32_t                  client_handle,
-			void                     *userdata,
-			struct cam_cpas_irq_data *irq_data);
+	cam_cpas_client_cb_func cam_cpas_client_cb;
 	uint32_t        client_handle;
 };
 
@@ -486,6 +505,27 @@ struct cam_ahb_vote {
 };
 
 /**
+ * struct cam_cpas_axi_per_path_bw_vote - Internal per path bandwidth vote information
+ *
+ * @usage_data:              client usage data (left/right/rdi)
+ * @transac_type:            Transaction type on the path (read/write)
+ * @path_data_type:          Path for which vote is given (video, display, rdi)
+ * @vote_level:              Vote level for this path
+ * @camnoc_bw:               CAMNOC bw for this path
+ * @mnoc_ab_bw:              MNOC AB bw for this path
+ * @mnoc_ib_bw:              MNOC IB bw for this path
+ */
+struct cam_cpas_axi_per_path_bw_vote {
+	uint32_t                      usage_data;
+	uint32_t                      transac_type;
+	uint32_t                      path_data_type;
+	uint32_t                      vote_level;
+	uint64_t                      camnoc_bw;
+	uint64_t                      mnoc_ab_bw;
+	uint64_t                      mnoc_ib_bw;
+};
+
+/**
  * struct cam_axi_vote : AXI vote
  *
  * @num_paths: Number of paths on which BW vote is sent to CPAS
@@ -494,7 +534,7 @@ struct cam_ahb_vote {
  */
 struct cam_axi_vote {
 	uint32_t num_paths;
-	struct cam_axi_per_path_bw_vote axi_path[CAM_CPAS_MAX_PATHS_PER_CLIENT];
+	struct cam_cpas_axi_per_path_bw_vote axi_path[CAM_CPAS_MAX_PATHS_PER_CLIENT];
 };
 
 /**
@@ -503,16 +543,14 @@ struct cam_axi_vote {
  * @brief: API to update the number of ifes, ife_lites, sfes and custom
  *         in the struct cam_cpas_private_soc.
  *
- * @idx                   : Camera subpart index
- * @num_subpart_available : Number of available subparts
- * @num_subpart_functional: Number of functional subparts
+ * @subpart_type  : Subpart type
+ * @subpart_count : Number of each subpart
  *
  * @returns 0 on success & -EINVAL when @subpart_type is invalid.
  *
  */
 int cam_cpas_prepare_subpart_info(
-	enum cam_subparts_index idx, uint32_t num_subpart_available,
-	uint32_t num_subpart_functional);
+	uint32_t subpart_type, uint32_t subpart_count);
 
 /**
  * cam_cpas_register_client()
@@ -734,15 +772,30 @@ const char *cam_cpas_axi_util_trans_type_to_string(
 	uint32_t path_data_type);
 
 /**
+ * cam_cpas_axi_util_drv_vote_lvl_to_string()
+ *
+ * @brief: API to get string for given DRV vote level
+ *
+ * @vote_lvl  : DRV vote level
+ *
+ * @return string.
+ *
+ */
+const char *cam_cpas_axi_util_drv_vote_lvl_to_string(
+	uint32_t vote_lvl);
+
+/**
  * cam_cpas_log_votes()
  *
  * @brief: API to print the all bw votes of axi client. It also print the
  *     applied camnoc axi clock vote value and ahb vote value
  *
+ * @ddr_only: Print only DDR info
+ *
  * @return 0 on success.
  *
  */
-void cam_cpas_log_votes(void);
+void cam_cpas_log_votes(bool ddr_only);
 
 /**
  * cam_cpas_select_qos_settings()
@@ -820,5 +873,50 @@ int cam_cpas_deactivate_llcc(enum cam_sys_cache_config_types type);
  *
  */
 int cam_cpas_dump_camnoc_buff_fill_info(uint32_t client_handle);
+
+/**
+ * cam_cpas_csid_input_core_info_update()
+ *
+ * @brief: API to communicate csid input core info to cpas
+ *
+ * @csid_idx: csid hw index connected to particular sfe
+ * @sfe_idx:  sfe idx to be connected to particular DRV path
+ * @set_port: Indicates whether to set or reset DRV port info in dynamic client
+ *
+ * @return 0 on success
+ *
+ */
+int cam_cpas_csid_input_core_info_update(int csid_idx, int sfe_idx, bool set_port);
+
+/**
+ * cam_cpas_csid_process_resume()
+ *
+ * @brief: API to process csid resume in cpas
+ * @csid_idx: CSID idx to notify resume for
+ *
+ * @return 0 on success
+ *
+ */
+int cam_cpas_csid_process_resume(uint32_t csid_idx);
+
+/**
+ * cam_cpas_query_drv_enable()
+ *
+ * @brief: API to indicate DRV enabled on hw or not
+ * @is_drv_enabled: Indication to be set by the API
+ *
+ * @return 0 on success
+ *
+ */
+int cam_cpas_query_drv_enable(bool *is_drv_enabled);
+
+/**
+ * cam_cpas_query_domain_id_security_support()
+ * @brief: API to determine if target supports domain id feature
+ *         This information is determined by cpas during probe
+ *
+ * @return true if there's support, false otherwise
+ */
+bool cam_cpas_query_domain_id_security_support(void);
 
 #endif /* _CAM_CPAS_API_H_ */

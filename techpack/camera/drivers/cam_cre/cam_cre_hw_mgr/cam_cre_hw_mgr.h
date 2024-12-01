@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef CAM_CRE_HW_MGR_H
@@ -99,7 +100,7 @@ struct cam_cre_ctx_clk_info {
 	uint32_t reserved;
 	int32_t clk_rate[CAM_MAX_VOTE];
 	uint32_t num_paths;
-	struct cam_axi_per_path_bw_vote axi_path[CAM_CRE_MAX_PER_PATH_VOTES];
+	struct cam_cpas_axi_per_path_bw_vote axi_path[CAM_CRE_MAX_PER_PATH_VOTES];
 };
 
 /**
@@ -134,7 +135,7 @@ struct cam_cre_clk_info {
 	uint32_t threshold;
 	uint32_t over_clked;
 	uint32_t num_paths;
-	struct cam_axi_per_path_bw_vote axi_path[CAM_CRE_MAX_PER_PATH_VOTES];
+	struct cam_cpas_axi_per_path_bw_vote axi_path[CAM_CRE_MAX_PER_PATH_VOTES];
 	uint32_t hw_type;
 	struct cam_req_mgr_timer *watch_dog;
 	uint32_t watch_dog_reset_counter;
@@ -145,14 +146,16 @@ struct cam_cre_clk_info {
 /**
  * struct cre_cmd_work_data
  *
- * @type:       Type of work data
- * @data:       Private data
- * @req_id:     Request Idx
+ * @type:        Type of work data
+ * @data:        Private data
+ * @req_idx:     Request Idx
+ * @request_id:  Request id
  */
 struct cre_cmd_work_data {
 	uint32_t type;
 	void *data;
 	int64_t req_idx;
+	uint64_t request_id;
 };
 
 /**
@@ -253,7 +256,7 @@ struct cam_cre_clk_bw_req_internal_v2 {
 	uint32_t rt_flag;
 	uint32_t reserved;
 	uint32_t num_paths;
-	struct cam_axi_per_path_bw_vote axi_path[CAM_CRE_MAX_PER_PATH_VOTES];
+	struct cam_cpas_axi_per_path_bw_vote axi_path[CAM_CRE_MAX_PER_PATH_VOTES];
 };
 
 /**
@@ -288,7 +291,7 @@ struct cam_cre_request {
 	struct    cre_io_buf *io_buf[CRE_MAX_BATCH_SIZE][CRE_MAX_IO_BUFS];
 	struct    cam_cre_clk_bw_request clk_info;
 	struct    cam_cre_clk_bw_req_internal_v2 clk_info_v2;
-	struct    cam_hw_mgr_dump_pf_data hang_data;
+	struct    cam_hw_mgr_pf_request_info hang_data;
 	ktime_t   submit_timestamp;
 };
 
@@ -341,6 +344,20 @@ struct cam_cre_ctx {
 };
 
 /**
+ * struct cam_cre_hw_cfg_req
+ *
+ * @list:              Requests submiited to HW
+ * @req_id:            Request id
+ * ctx_id:             Ctx id
+ *
+ */
+struct cam_cre_hw_cfg_req {
+	struct list_head   list;
+	uint64_t           req_id;
+	uint32_t           ctx_id;
+};
+
+/**
  * struct cam_cre_hw_mgr
  *
  * @cre_ctx_cnt:       Open context count
@@ -366,6 +383,9 @@ struct cam_cre_ctx {
  * @clk_info:          CRE clock Info for HW manager
  * @dentry:            Pointer to CRE debugfs directory
  * @dump_req_data_enable: CRE hang dump enablement
+ * @hw_config_req_list: Requests submitted to HW
+ * @free_req_list:     Requests that are free
+ * @req_list:          Request list which is applied
  */
 struct cam_cre_hw_mgr {
 	uint32_t      cre_ctx_cnt;
@@ -394,6 +414,10 @@ struct cam_cre_hw_mgr {
 	struct cam_cre_clk_info clk_info;
 	struct dentry *dentry;
 	bool   dump_req_data_enable;
+
+	struct list_head hw_config_req_list;
+	struct list_head free_req_list;
+	struct cam_cre_hw_cfg_req req_list[CAM_CRE_HW_CFG_Q_MAX];
 };
 
 /**

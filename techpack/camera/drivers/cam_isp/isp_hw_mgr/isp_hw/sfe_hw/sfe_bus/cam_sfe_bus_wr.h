@@ -10,9 +10,13 @@
 
 #include "cam_sfe_bus.h"
 
-#define CAM_SFE_BUS_WR_MAX_CLIENTS     16
-#define CAM_SFE_BUS_WR_MAX_SUB_GRPS    6
-#define CAM_SFE_BUS_CONS_ERR_MAX       32
+#define CAM_SFE_BUS_WR_MAX_CLIENTS        17
+#define CAM_SFE_BUS_WR_MAX_SUB_GRPS       6
+#define CAM_SFE_BUS_CONS_ERR_MAX          32
+
+#define CAM_SFE_BUS_WR_IRQ_CONS_VIOLATION       BIT(28)
+#define CAM_SFE_BUS_WR_IRQ_CCIF_VIOLATION       BIT(30)
+#define CAM_SFE_BUS_WR_IRQ_IMAGE_SIZE_VIOLATION BIT(31)
 
 enum cam_sfe_bus_wr_src_grp {
 	CAM_SFE_BUS_WR_SRC_GRP_0,
@@ -35,6 +39,7 @@ enum cam_sfe_bus_wr_comp_grp_type {
 	CAM_SFE_BUS_WR_COMP_GRP_7,
 	CAM_SFE_BUS_WR_COMP_GRP_8,
 	CAM_SFE_BUS_WR_COMP_GRP_9,
+	CAM_SFE_BUS_WR_COMP_GRP_10,
 	CAM_SFE_BUS_WR_COMP_GRP_MAX,
 };
 
@@ -56,29 +61,34 @@ enum cam_sfe_bus_sfe_out_type {
 	CAM_SFE_BUS_SFE_OUT_BAYER_RS_1,
 	CAM_SFE_BUS_SFE_OUT_BAYER_RS_2,
 	CAM_SFE_BUS_SFE_OUT_IR,
+	CAM_SFE_BUS_SFE_OUT_HDR_STATS,
 	CAM_SFE_BUS_SFE_OUT_MAX,
 };
 
 /*
- * struct cam_sfe_bus_wr_err_irq_desc:
+ * struct cam_sfe_constraint_error_desc:
  *
- * @Brief:        Bus wr error info
+ * @Brief:        Constraint error desc
  */
-struct cam_sfe_bus_wr_err_irq_desc {
+struct cam_sfe_bus_wr_constraint_error_desc {
 	uint32_t  bitmask;
-	char     *err_name;
-	char     *desc;
-	void     (*err_handler)(void *bus_priv, void *args);
+	char     *error_description;
 };
 
 /*
- * struct cam_sfe_constraint_error_info:
+ * @brief:        Constraint error info
  *
- * @Brief:        Constraint error info
+ * @error_desc: Error description for various constraint errors.
+ * @num_cons_err: Number of constraint errors
+ * @img_addr_unalign_shift: shift for image address unalign error
+ * @img_width_unalign_shift: shift for image width unalign error
+ *
  */
-struct cam_sfe_constraint_error_info {
-	uint32_t  bitmask;
-	char     *error_description;
+struct cam_sfe_bus_wr_constraint_error_info {
+	struct cam_sfe_bus_wr_constraint_error_desc *constraint_error_list;
+	uint32_t num_cons_err;
+	uint32_t img_addr_unalign_shift;
+	uint32_t img_width_unalign_shift;
 };
 
 /*
@@ -99,6 +109,7 @@ struct cam_sfe_bus_reg_offset_common {
 	uint32_t debug_status_top;
 	uint32_t test_bus_ctrl;
 	uint32_t top_irq_mask_0;
+	uint32_t qos_eos_cfg;
 	struct cam_irq_controller_reg_info irq_reg_info;
 };
 
@@ -149,6 +160,7 @@ struct cam_sfe_bus_sfe_out_hw_info {
 	uint32_t                            max_height;
 	uint32_t                            source_group;
 	uint32_t                            mid[CAM_SFE_BUS_MAX_MID_PER_PORT];
+	uint32_t                            num_mid;
 	uint32_t                            num_wm;
 	uint32_t                            wm_idx;
 	uint32_t                            en_line_done;
@@ -160,20 +172,21 @@ struct cam_sfe_bus_sfe_out_hw_info {
  *
  * @Brief:            HW register info for entire Bus
  *
- * @common_reg:            Common register details
- * @num_client:            Total number of write clients
- * @bus_client_reg:        Bus client register info
- * @sfe_out_hw_info:       SFE output capability
- * @num_cons_err:          Number of contraint errors in list
- * @constraint_error_list: Static list of all constraint errors
- * @num_comp_grp:          Number of composite groups
- * @comp_done_shift:       Mask shift for comp done mask
- * @line_done_cfg:         Line done cfg for wr/rd sync
- * @top_irq_shift:         Mask shift for top level BUS WR irq
- * @pack_align_shift:      Packer format alignment bit shift
- * @max_bw_counter_limit:  Max BW counter limit
- * @num_num_bus_wr_errors: Number of bus wr errors
- * @bus_wr_err_desc:       bus wr errors info
+ * @common_reg:                Common register details
+ * @num_client:                Total number of write clients
+ * @bus_client_reg:            Bus client register info
+ * @sfe_out_hw_info:           SFE output capability
+ * @constraint_error_info:     Constraint Error information
+ * @comp_done_mask:           List of buf done mask shift values for
+ *                             each comp grp
+ * @num_comp_grp:              Number of composite groups
+ * @line_done_cfg:             Line done cfg for wr/rd sync
+ * @top_irq_shift:             Mask shift for top level BUS WR irq
+ * @max_out_res:               maximum number of sfe out res in uapi
+ * @pack_align_shift:          Packer format alignment bit shift
+ * @max_bw_counter_limit:      Max BW counter limit
+ * @sys_cache_default_val:     System cache default config
+ * @irq_err_mask:              IRQ error mask
  */
 struct cam_sfe_bus_wr_hw_info {
 	struct cam_sfe_bus_reg_offset_common common_reg;
@@ -183,17 +196,17 @@ struct cam_sfe_bus_wr_hw_info {
 	uint32_t num_out;
 	struct cam_sfe_bus_sfe_out_hw_info
 		sfe_out_hw_info[CAM_SFE_BUS_SFE_OUT_MAX];
-	uint32_t num_cons_err;
-	struct cam_sfe_constraint_error_info
-		constraint_error_list[CAM_SFE_BUS_CONS_ERR_MAX];
+	struct cam_sfe_bus_wr_constraint_error_info
+		*constraint_error_info;
+	uint32_t comp_done_mask[CAM_SFE_BUS_WR_COMP_GRP_MAX];
 	uint32_t num_comp_grp;
-	uint32_t comp_done_shift;
 	uint32_t line_done_cfg;
 	uint32_t top_irq_shift;
+	uint32_t max_out_res;
 	uint32_t pack_align_shift;
 	uint32_t max_bw_counter_limit;
-	uint32_t num_bus_wr_errors;
-	struct cam_sfe_bus_wr_err_irq_desc *bus_wr_err_desc;
+	uint32_t sys_cache_default_val;
+	uint32_t irq_err_mask;
 };
 
 /*
@@ -230,7 +243,4 @@ int cam_sfe_bus_wr_init(
  */
 int cam_sfe_bus_wr_deinit(struct cam_sfe_bus     **sfe_bus);
 
-void cam_sfe_bus_wr_get_constraint_errors(void *bus_priv, void *args);
-void cam_sfe_bus_wr_print_ccif_violation_status(void *bus_priv, void *args);
-void cam_sfe_bus_wr_print_violation_info(void *bus_priv, void *args);
 #endif /* _CAM_SFE_BUS_WR_H_ */

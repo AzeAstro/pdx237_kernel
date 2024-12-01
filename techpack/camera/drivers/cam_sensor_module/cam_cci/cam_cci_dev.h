@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_CCI_DEV_H_
@@ -138,7 +138,7 @@ struct cam_cci_master_info {
 	atomic_t done_pending[NUM_QUEUES];
 	spinlock_t lock_q[NUM_QUEUES];
 	struct semaphore master_sem;
-	spinlock_t freq_cnt_lock;
+	struct mutex freq_cnt_lock;
 	uint16_t freq_ref_cnt;
 	bool is_initilized;
 };
@@ -201,6 +201,7 @@ enum cam_cci_state_t {
  * @init_mutex:                 Mutex for maintaining refcount for attached
  *                              devices to cci during init/deinit.
  * @dump_en:                    To enable the selective dump
+ * @is_probing:                 Flag to determine if we are probing a sensor
  */
 struct cci_device {
 	struct v4l2_subdev subdev;
@@ -232,6 +233,7 @@ struct cci_device {
 	uint32_t irqs_disabled;
 	struct mutex init_mutex;
 	uint64_t  dump_en;
+	bool is_probing;
 };
 
 enum cam_cci_i2c_cmd_type {
@@ -278,6 +280,7 @@ struct cam_sensor_cci_client {
 	uint16_t retries;
 	uint16_t id_map;
 	uint16_t cci_device;
+	bool is_probing;
 };
 
 struct cam_cci_ctrl {
@@ -290,6 +293,7 @@ struct cam_cci_ctrl {
 		struct cam_cci_wait_sync_cfg cci_wait_sync_cfg;
 		struct cam_cci_gpio_cfg gpio_cfg;
 	} cfg;
+	bool is_probing;
 };
 
 struct cci_write_async {

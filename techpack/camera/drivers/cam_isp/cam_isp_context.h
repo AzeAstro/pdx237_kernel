@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_ISP_CONTEXT_H_
@@ -265,6 +265,7 @@ struct cam_isp_context_event_record {
  * @bubble_frame_cnt:          Count of the frame after bubble
  * @aeb_error_cnt:             Count number of times a specific AEB error scenario is
  *                             enountered
+ * @out_of_sync_cnt:           Out of sync error count for AEB
  * @state_monitor_head:        Write index to the state monitoring array
  * @req_info                   Request id information about last buf done
  * @cam_isp_ctx_state_monitor: State monitoring array
@@ -273,6 +274,8 @@ struct cam_isp_context_event_record {
  * @rdi_only_context:          Get context type information.
  *                             true, if context is rdi only context
  * @offline_context:           Indicate whether context is for offline IFE
+ * @vfps_aux_context:          Indicate whether context is for VFPS aux link
+ * @resume_hw_in_flushed:      Indicate whether resume hw in flushed state in vfps case
  * @hw_acquired:               Indicate whether HW resources are acquired
  * @init_received:             Indicate whether init config packet is received
  * @split_acquire:             Indicate whether a separate acquire is expected
@@ -291,8 +294,20 @@ struct cam_isp_context_event_record {
  * @v4l2_event_sub_ids         contains individual bits representing subscribed v4l2 ids
  * @aeb_enabled:               Indicate if stream is for AEB
  * @do_internal_recovery:      Enable KMD halt/reset/resume internal recovery
- * @vfe_bus_comp_grp:          Vfe bus comp group record
- * @sfe_bus_comp_grp:          Sfe bus comp group record
+ * @last_sof_jiffies:          Record the jiffies of last sof
+ * @last_applied_jiffies:      Record the jiffiest of last applied req
+ * @mswitch_default_apply_delay_max_cnt: Max mode switch delay among all devices connected
+ *                                       on the same link as this ISP context
+ * @mswitch_default_apply_delay_ref_cnt: Ref cnt for this context to decide when to apply
+ *                                       mode switch settings
+ * @handle_mswitch:            Indicates if IFE needs to explicitly handle mode switch
+ *                             on frame skip callback from request manager.
+ *                             This is decided based on the max mode switch delay published
+ *                             by other devices on the link as part of link setup
+ * @mode_switch_en:            Indicates if mode switch is enabled
+ * @is_shdr:                   true, if usecase is sdhr
+ * @is_shdr_master:            Flag to indicate master context in shdr usecase
+ * @last_num_exp:              Last num of exposure
  *
  */
 struct cam_isp_context {
@@ -320,6 +335,7 @@ struct cam_isp_context {
 	uint64_t                         last_sof_timestamp;
 	uint32_t                         bubble_frame_cnt;
 	uint32_t                         aeb_error_cnt;
+	uint32_t                         out_of_sync_cnt;
 	atomic64_t                       state_monitor_head;
 	struct cam_isp_context_state_monitor cam_isp_ctx_state_monitor[
 		CAM_ISP_CTX_STATE_MONITOR_MAX_ENTRIES];
@@ -330,6 +346,8 @@ struct cam_isp_context {
 		CAM_ISP_CTX_EVENT_MAX][CAM_ISP_CTX_EVENT_RECORD_MAX_ENTRIES];
 	bool                                  rdi_only_context;
 	bool                                  offline_context;
+	bool                                  vfps_aux_context;
+	bool                                  resume_hw_in_flushed;
 	bool                                  hw_acquired;
 	bool                                  init_received;
 	bool                                  split_acquire;
@@ -346,10 +364,18 @@ struct cam_isp_context {
 	int32_t                               trigger_id;
 	int64_t                               last_bufdone_err_apply_req_id;
 	uint32_t                              v4l2_event_sub_ids;
+	struct cam_hw_err_param              err_inject_params;
 	bool                                  aeb_enabled;
 	bool                                  do_internal_recovery;
-	struct cam_isp_hw_comp_record        *vfe_bus_comp_grp;
-	struct cam_isp_hw_comp_record        *sfe_bus_comp_grp;
+	uint64_t                              last_sof_jiffies;
+	uint64_t                              last_applied_jiffies;
+	int32_t                               mswitch_default_apply_delay_max_cnt;
+	atomic_t                              mswitch_default_apply_delay_ref_cnt;
+	bool                                  handle_mswitch;
+	bool                                  mode_switch_en;
+	bool                                  is_tfe_shdr;
+	bool                                  is_shdr_master;
+	uint32_t                              last_num_exp;
 };
 
 /**

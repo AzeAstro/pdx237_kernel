@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_IFE_CSID_COMMON_H_
@@ -34,14 +35,17 @@
 #define CAM_IFE_CSID_LOG_BUF_LEN                          512
 
 #define CAM_IFE_CSID_CAP_INPUT_LCR                        0x1
-#define CAM_IFE_CSID_CAP_MIPI8_UNPACK                     0x2
-#define CAM_IFE_CSID_CAP_MIPI10_UNPACK                    0x4
-#define CAM_IFE_CSID_CAP_MIPI12_UNPACK                    0x8
-#define CAM_IFE_CSID_CAP_MIPI14_UNPACK                    0x10
-#define CAM_IFE_CSID_CAP_MIPI16_UNPACK                    0x20
-#define CAM_IFE_CSID_CAP_MIPI20_UNPACK                    0x40
+#define CAM_IFE_CSID_CAP_RDI_UNPACK_MSB                   0x2
 #define CAM_IFE_CSID_CAP_LINE_SMOOTHING_IN_RDI            0x80
 #define CAM_IFE_CSID_CAP_SOF_RETIME_DIS                   0x100
+
+/*
+ * CSID RX debug vc-dt capture
+ */
+#define CAM_IFE_CSID_DEBUGFS_RST_STROBE_MASK              0xF
+#define CAM_IFE_CSID_DEBUGFS_VC_DT_MASK                   0xFF
+#define CAM_IFE_CSID_DEBUGFS_VC_SHIFT_MASK                0x4
+#define CAM_IFE_CSID_DEBUGFS_DT_SHIFT_MASK                0xC
 
 /*
  * Debug values enable the corresponding interrupts and debug logs provide
@@ -57,6 +61,9 @@
 #define CAM_IFE_CSID_DEBUG_ENABLE_HBI_VBI_INFO            BIT(7)
 #define CAM_IFE_CSID_DEBUG_DISABLE_EARLY_EOF              BIT(8)
 #define CAM_IFE_DEBUG_ENABLE_UNMAPPED_VC_DT_IRQ           BIT(9)
+#define CAM_IFE_CSID_DEBUG_ENABLE_VOTE_UP_IRQ             BIT(10)
+#define CAM_IFE_CSID_DEBUG_ENABLE_VOTE_DN_IRQ             BIT(11)
+#define CAM_IFE_CSID_DEBUG_ENABLE_ERR_NO_VOTE_DN_IRQ      BIT(12)
 
 /* Binning supported masks. Binning support changes for specific paths
  * and also for targets. With the mask, we handle the supported features
@@ -68,6 +75,10 @@
 #define CAM_IFE_CSID_BIN_VERTICAL                         BIT(2)
 
 #define CAM_IFE_CSID_WIDTH_FUSE_VAL_MAX			  4
+#define CAM_IFE_CSID_IN_RES_MAX				  (CAM_ISP_IFE_IN_RES_PHY_7 + 1)
+
+/* factor to conver qtime to boottime */
+extern int64_t qtime_to_boottime;
 
 /* enum for multiple mem base in some of the targets */
 enum cam_ife_csid_mem_base_id {
@@ -202,6 +213,8 @@ struct cam_ife_csid_csi2_rx_reg_info {
 	uint32_t de_scramble_type1_cfg1_addr;
 	uint32_t de_scramble_type0_cfg0_addr;
 	uint32_t de_scramble_type0_cfg1_addr;
+	uint32_t secure_cfg0;
+	uint32_t secure_mask_cfg0;
 
 	/*configurations */
 	uint32_t rst_srb_all;
@@ -222,18 +235,28 @@ struct cam_ife_csid_csi2_rx_reg_info {
 	uint32_t epd_mode_shift_en;
 	uint32_t eotp_shift_en;
 	uint32_t dyn_sensor_switch_shift_en;
+	uint32_t rup_aup_latch_shift;
+	bool     rup_aup_latch_supported;
 	uint32_t phy_num_mask;
 	uint32_t vc_mask;
 	uint32_t wc_mask;
 	uint32_t dt_mask;
+	uint32_t vc_shift;
+	uint32_t dt_shift;
+	uint32_t wc_shift;
 	uint32_t calc_crc_mask;
 	uint32_t expected_crc_mask;
+	uint32_t calc_crc_shift;
 	uint32_t lane_num_shift;
 	uint32_t lane_cfg_shift;
 	uint32_t phy_type_shift;
 	uint32_t phy_num_shift;
 	uint32_t tpg_mux_en_shift;
 	uint32_t tpg_num_sel_shift;
+	uint32_t long_pkt_strobe_rst_shift;
+	uint32_t short_pkt_strobe_rst_shift;
+	uint32_t cphy_pkt_strobe_rst_shift;
+	uint32_t unmapped_pkt_strobe_rst_shift;
 	uint32_t fatal_err_mask;
 	uint32_t part_fatal_err_mask;
 	uint32_t non_fatal_err_mask;
@@ -279,14 +302,28 @@ struct cam_ife_csid_hw_counters {
 /*
  * struct cam_ife_csid_debug_info: place holder for csid debug
  *
- * @debug_val:          Debug val for enabled features
- * @rx_mask:            Debug mask for rx irq
- * @path_mask:          Debug mask for path irq
+ * @debug_val:             Debug val for enabled features
+ * @rx_capture_vc:         rx packet vc capture
+ * @rx_capture_dt:         rx packet dt capture
+ * @rst_capture_strobes:   rx packet capture rst strobes
+ * @top_mask:              Debug mask for top irq
+ * @rx_mask:               Debug mask for rx irq
+ * @path_mask:             Debug mask for path irq
+ * @test_bus_val:          CSID test bus value
+ * @rx_capture_debug_set:  rx pkt capture debug set
+ * @test_bus_enabled:      test bus enabled
  */
 struct cam_ife_csid_debug_info {
 	uint32_t                          debug_val;
+	uint32_t                          rx_capture_vc;
+	uint32_t                          rx_capture_dt;
+	uint32_t                          rst_capture_strobes;
+	uint32_t                          top_mask;
 	uint32_t                          rx_mask;
 	uint32_t                          path_mask;
+	uint32_t                          test_bus_val;
+	bool                              rx_capture_debug_set;
+	bool                              test_bus_enabled;
 };
 
 /*
@@ -302,6 +339,9 @@ struct cam_ife_csid_debug_info {
  * @offline_mode:           flag to indicate if csid in offline mode
  * @rdi_lcr_en:             flag to indicate if RDI to lcr is enabled
  * @sfe_en:                 flag to indicate if SFE is enabled
+ * @pf_err_detected:        flag to indicate if camnoc has encountered
+ *                          error - page fault
+ * @domain_id_security      Flag to determine if target has domain-id based security
  */
 struct cam_ife_csid_hw_flags {
 	bool                  device_enabled;
@@ -316,6 +356,8 @@ struct cam_ife_csid_hw_flags {
 	bool                  offline_mode;
 	bool                  rdi_lcr_en;
 	bool                  sfe_en;
+	bool                  pf_err_detected;
+	bool                  domain_id_security;
 };
 
 /*
@@ -355,6 +397,7 @@ struct cam_ife_csid_rx_cfg  {
 	uint32_t                        tpg_num_sel;
 	uint32_t                        mup;
 	uint32_t                        epd_supported;
+	uint32_t                        top_irq_handle;
 	uint32_t                        irq_handle;
 	uint32_t                        err_irq_handle;
 	bool                            dynamic_sensor_switch_en;

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_COMPAT_H_
@@ -14,6 +14,7 @@
 #include <linux/qcom_scm.h>
 #include <linux/list_sort.h>
 #include <linux/dma-iommu.h>
+#include <soc/qcom/of_common.h>
 
 #include "cam_csiphy_dev.h"
 #include "cam_cpastop_hw.h"
@@ -48,20 +49,32 @@ int cam_csiphy_notify_secure_mode(struct csiphy_device *csiphy_dev,
 void cam_free_clear(const void *);
 void cam_check_iommu_faults(struct iommu_domain *domain,
 	struct cam_smmu_pf_info *pf_info);
-int cam_get_ddr_type(void);
+static inline int cam_get_ddr_type(void) { return of_fdt_get_ddrtype(); }
 int cam_compat_util_get_dmabuf_va(struct dma_buf *dmabuf, uintptr_t *vaddr);
 void cam_compat_util_put_dmabuf_va(struct dma_buf *dmabuf, void *vaddr);
 void cam_smmu_util_iommu_custom(struct device *dev,
 	dma_addr_t discard_start, size_t discard_length);
 
+const struct device *cam_cpas_get_rsc_dev_for_drv(uint32_t index);
+
+int cam_cpas_start_drv_for_dev(const struct device *dev);
+
+int cam_cpas_stop_drv_for_dev(const struct device *dev);
+
+int cam_cpas_drv_channel_switch_for_dev(const struct device *dev);
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 int cam_req_mgr_ordered_list_cmp(void *priv,
 	const struct list_head *head_1, const struct list_head *head_2);
+void cam_i3c_driver_remove(struct i3c_device *client);
 #else
 int cam_req_mgr_ordered_list_cmp(void *priv,
 	struct list_head *head_1, struct list_head *head_2);
+int cam_i3c_driver_remove(struct i3c_device *client);
 #endif
 
-int cam_get_subpart_info(uint32_t *part_info, uint32_t max_num_cam);
+long cam_dma_buf_set_name(struct dma_buf *dmabuf, const char *name);
+
+int cam_get_subpart_info(uint32_t *part_info, int *num_cam);
 
 #endif /* _CAM_COMPAT_H_ */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -54,10 +54,10 @@ free_power_settings:
 static int32_t cam_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl)
 {
 	int rc = 0;
-	struct cam_hw_soc_info  *soc_info =
-		&a_ctrl->soc_info;
-	struct cam_actuator_soc_private  *soc_private;
-	struct cam_sensor_power_ctrl_t *power_info;
+	struct cam_hw_soc_info                 *soc_info = &a_ctrl->soc_info;
+	struct cam_actuator_soc_private        *soc_private;
+	struct cam_sensor_power_ctrl_t         *power_info;
+	struct completion                      *i3c_probe_completion = NULL;
 
 	soc_private =
 		(struct cam_actuator_soc_private *)a_ctrl->soc_info.soc_private;
@@ -99,7 +99,10 @@ static int32_t cam_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl)
 
 	power_info->dev = soc_info->dev;
 
-	rc = cam_sensor_core_power_up(power_info, soc_info);
+	if (a_ctrl->io_master_info.master_type == I3C_MASTER)
+		i3c_probe_completion = cam_actuator_get_i3c_completion(a_ctrl->soc_info.index);
+
+	rc = cam_sensor_core_power_up(power_info, soc_info, i3c_probe_completion);
 	if (rc) {
 		CAM_ERR(CAM_ACTUATOR,
 			"failed in actuator power up rc %d", rc);
@@ -384,9 +387,14 @@ static int cam_actuator_update_req_mgr(
 		a_ctrl->bridge_intf.crm_cb->add_req) {
 		rc = a_ctrl->bridge_intf.crm_cb->add_req(&add_req);
 		if (rc) {
-			CAM_ERR(CAM_ACTUATOR,
-				"Adding request: %llu failed: rc: %d",
-				csl_packet->header.request_id, rc);
+			if (rc == -EBADR)
+				CAM_INFO(CAM_ACTUATOR,
+					"Adding request: %llu failed: rc: %d, it has been flushed",
+					csl_packet->header.request_id, rc);
+			else
+				CAM_ERR(CAM_ACTUATOR,
+					"Adding request: %llu failed: rc: %d",
+					csl_packet->header.request_id, rc);
 			return rc;
 		}
 		CAM_DBG(CAM_ACTUATOR, "Request Id: %lld added to CRM",
@@ -409,7 +417,8 @@ int32_t cam_actuator_publish_dev_info(struct cam_req_mgr_device_info *info)
 
 	info->dev_id = CAM_REQ_MGR_DEVICE_ACTUATOR;
 	strlcpy(info->name, CAM_ACTUATOR_NAME, sizeof(info->name));
-	info->p_delay = 1;
+	info->p_delay = CAM_PIPELINE_DELAY_1;
+	info->m_delay = CAM_MODESWITCH_DELAY_1;
 	info->trigger = CAM_TRIGGER_POINT_SOF;
 
 	return 0;
@@ -491,7 +500,7 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 		CAM_DBG(CAM_ACTUATOR,
 			"reject request %lld, last request to flush %lld",
 			csl_packet->header.request_id, a_ctrl->last_flush_req);
-		rc = -EINVAL;
+		rc = -EBADR;
 		goto end;
 	}
 
@@ -516,10 +525,6 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 		}
 		/* Loop through multiple command buffers */
 		for (i = 0; i < csl_packet->num_cmd_buf; i++) {
-			rc = cam_packet_util_validate_cmd_desc(&cmd_desc[i]);
-			if (rc)
-				return rc;
-
 			total_cmd_buf_in_bytes = cmd_desc[i].length;
 			if (!total_cmd_buf_in_bytes)
 				continue;
@@ -720,6 +725,7 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 		}
 		break;
 	case CAM_ACTUATOR_PACKET_OPCODE_READ: {
+		uint64_t qtime_ns;
 		struct cam_buf_io_cfg *io_cfg;
 		struct i2c_settings_array i2c_read_settings;
 
@@ -768,6 +774,24 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 			CAM_ERR(CAM_ACTUATOR, "cannot read data, rc:%d", rc);
 			delete_request(&i2c_read_settings);
 			goto end;
+		}
+
+		if (csl_packet->num_io_configs > 1) {
+			rc = cam_sensor_util_get_current_qtimer_ns(&qtime_ns);
+			if (rc < 0) {
+				CAM_ERR(CAM_SENSOR, "failed to get qtimer rc:%d");
+				delete_request(&i2c_read_settings);
+				return rc;
+			}
+
+			rc = cam_sensor_util_write_qtimer_to_io_buffer(
+				qtime_ns, &io_cfg[1]);
+			if (rc < 0) {
+				CAM_ERR(CAM_ACTUATOR,
+					"write qtimer failed rc: %d", rc);
+				delete_request(&i2c_read_settings);
+				return rc;
+			}
 		}
 
 		rc = delete_request(&i2c_read_settings);
@@ -1014,7 +1038,12 @@ int32_t cam_actuator_driver_cmd(struct cam_actuator_ctrl_t *a_ctrl,
 			ACT_APPLY_SETTINGS_LATER;
 		rc = cam_actuator_i2c_pkt_parse(a_ctrl, arg);
 		if (rc < 0) {
-			CAM_ERR(CAM_ACTUATOR, "Failed in actuator Parsing");
+			if (rc == -EBADR)
+				CAM_INFO(CAM_ACTUATOR,
+					"Failed in actuator Parsing, it has been flushed");
+			else
+				CAM_ERR(CAM_ACTUATOR,
+					"Failed in actuator Parsing");
 			goto release_mutex;
 		}
 

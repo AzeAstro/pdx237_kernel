@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef CAM_OPE_HW_MGR_H
@@ -78,7 +79,7 @@ struct cam_ope_clk_bw_req_internal_v2 {
 	uint32_t rt_flag;
 	uint32_t reserved;
 	uint32_t num_paths;
-	struct cam_axi_per_path_bw_vote axi_path[CAM_OPE_MAX_PER_PATH_VOTES];
+	struct cam_cpas_axi_per_path_bw_vote axi_path[CAM_OPE_MAX_PER_PATH_VOTES];
 };
 
 /**
@@ -118,7 +119,7 @@ struct cam_ctx_clk_info {
 	uint64_t compressed_bw;
 	int32_t clk_rate[CAM_MAX_VOTE];
 	uint32_t num_paths;
-	struct cam_axi_per_path_bw_vote axi_path[CAM_OPE_MAX_PER_PATH_VOTES];
+	struct cam_cpas_axi_per_path_bw_vote axi_path[CAM_OPE_MAX_PER_PATH_VOTES];
 };
 
 /**
@@ -155,7 +156,7 @@ struct cam_ope_clk_info {
 	uint64_t uncompressed_bw;
 	uint64_t compressed_bw;
 	uint32_t num_paths;
-	struct cam_axi_per_path_bw_vote axi_path[CAM_OPE_MAX_PER_PATH_VOTES];
+	struct cam_cpas_axi_per_path_bw_vote axi_path[CAM_OPE_MAX_PER_PATH_VOTES];
 	uint32_t hw_type;
 	struct cam_req_mgr_timer *watch_dog;
 	uint32_t watch_dog_reset_counter;
@@ -406,11 +407,12 @@ struct cam_ope_request {
 	uint8_t num_stripe_cmd_bufs[OPE_MAX_BATCH_SIZE][OPE_MAX_STRIPES];
 	struct ope_kmd_buffer ope_kmd_buf;
 	struct ope_debug_buffer ope_debug_buf;
+	struct cam_kmd_buf_info genirq_buff_info;
 	struct ope_io_buf *io_buf[OPE_MAX_BATCH_SIZE][OPE_MAX_IO_BUFS];
 	struct cam_cdm_bl_request *cdm_cmd;
 	struct cam_ope_clk_bw_request clk_info;
 	struct cam_ope_clk_bw_req_internal_v2 clk_info_v2;
-	struct cam_hw_mgr_dump_pf_data hang_data;
+	struct cam_hw_mgr_pf_request_info hang_data;
 	ktime_t submit_timestamp;
 };
 

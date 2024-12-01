@@ -25,6 +25,8 @@
 
 #define CAM_VFE_MAX_UBWC_PORTS        4
 
+#define CAM_VFE_PERF_CNT_MAX          2
+
 enum cam_isp_hw_vfe_in_mux {
 	CAM_ISP_HW_VFE_IN_CAMIF       = 0,
 	CAM_ISP_HW_VFE_IN_TESTGEN     = 1,
@@ -144,7 +146,6 @@ struct cam_vfe_hw_vfe_bus_rd_acquire_args {
  * @cdm_ops:                 CDM operations
  * @disable_ubwc_comp:       Disable UBWC compression
  * @use_wm_pack:             Use WM Packing
- * @comp_grp_id:             VFE bus comp group id
  */
 struct cam_vfe_hw_vfe_out_acquire_args {
 	struct cam_isp_resource_node         *rsrc_node;
@@ -157,7 +158,6 @@ struct cam_vfe_hw_vfe_out_acquire_args {
 	struct cam_cdm_utils_ops             *cdm_ops;
 	bool                                  disable_ubwc_comp;
 	bool                                  use_wm_pack;
-	uint32_t                              comp_grp_id;
 };
 
 /*
@@ -311,7 +311,6 @@ struct cam_vfe_top_irq_evt_payload {
  *                           handled
  * @error_type:              Identify different errors
  * @ts:                      Timestamp
- * @last_consumed_addr:      Last consumed addr for resource
  */
 struct cam_vfe_bus_irq_evt_payload {
 	struct list_head            list;
@@ -323,7 +322,6 @@ struct cam_vfe_bus_irq_evt_payload {
 	uint32_t                    evt_id;
 	uint32_t                    irq_reg_val[CAM_IFE_BUS_IRQ_REGISTERS_MAX];
 	struct cam_isp_timestamp    ts;
-	uint32_t                    last_consumed_addr;
 };
 
 /**
@@ -376,6 +374,20 @@ struct cam_vfe_generic_ubwc_config {
 	uint32_t   api_version;
 	struct cam_vfe_generic_ubwc_plane_config
 		ubwc_plane_cfg[CAM_PACKET_MAX_PLANES - 1];
+};
+
+
+/*
+ * struct cam_vfe_generic_debug_config:
+ *
+ * @num_counters            : Number of perf counters configured
+ * @vfe_perf_counter_val    : VFE perf counter values
+ * @disable_ife_mmu_prefetch: Disable IFE mmu prefetch
+ */
+struct cam_vfe_generic_debug_config {
+	uint32_t  num_counters;
+	uint32_t  vfe_perf_counter_val[CAM_VFE_PERF_CNT_MAX];
+	bool      disable_ife_mmu_prefetch;
 };
 
 /*

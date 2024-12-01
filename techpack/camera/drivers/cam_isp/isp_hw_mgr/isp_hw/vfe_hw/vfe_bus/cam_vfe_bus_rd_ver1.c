@@ -535,31 +535,6 @@ static int cam_vfe_bus_deinit_rm_resource(
 static int cam_vfe_bus_rd_get_secure_mode(void *priv, void *cmd_args,
 	uint32_t arg_size)
 {
-	struct cam_isp_hw_get_cmd_update            *secure_cmd;
-	struct cam_vfe_bus_rd_ver1_priv             *bus_priv;
-	struct cam_vfe_bus_rd_ver1_vfe_bus_rd_data  *vfe_bus_rd_data = NULL;
-	uint32_t                                    *mode;
-
-	bus_priv = (struct cam_vfe_bus_rd_ver1_priv  *) priv;
-	secure_cmd  = (struct cam_isp_hw_get_cmd_update  *)cmd_args;
-
-	if (!bus_priv || !secure_cmd) {
-		CAM_ERR(CAM_ISP, "Failed Invalid data");
-		return -EINVAL;
-	}
-
-	vfe_bus_rd_data = (struct cam_vfe_bus_rd_ver1_vfe_bus_rd_data *)
-		secure_cmd->res->res_priv;
-
-	if (!vfe_bus_rd_data) {
-		CAM_ERR(CAM_ISP, "Failed Invalid data");
-		return -EINVAL;
-	}
-
-	mode = (uint32_t *)secure_cmd->data;
-	*mode = (vfe_bus_rd_data->secure_mode == CAM_SECURE_MODE_SECURE) ?
-		true : false;
-
 	return 0;
 }
 
@@ -1298,7 +1273,8 @@ int cam_vfe_bus_rd_ver1_init(
 		rc = cam_vfe_bus_init_rm_resource(i, bus_priv, bus_hw_info,
 			&bus_priv->bus_client[i]);
 		if (rc < 0) {
-			CAM_ERR(CAM_ISP, "Init RM failed rc=%d", rc);
+			CAM_ERR(CAM_ISP, "Init RM failed for client:%d, rc=%d",
+				i, rc);
 			goto deinit_rm;
 		}
 	}
@@ -1307,7 +1283,8 @@ int cam_vfe_bus_rd_ver1_init(
 		rc = cam_vfe_bus_init_vfe_bus_read_resource(i, bus_priv,
 			bus_rd_hw_info);
 		if (rc < 0) {
-			CAM_ERR(CAM_ISP, "Init VFE Out failed rc=%d", rc);
+			CAM_ERR(CAM_ISP, "Init VFE Out failed for client:%d, rc=%d",
+				i, rc);
 			goto deinit_vfe_bus_rd;
 		}
 	}
@@ -1329,8 +1306,6 @@ int cam_vfe_bus_rd_ver1_init(
 	return rc;
 
 deinit_vfe_bus_rd:
-	if (i < 0)
-		i = CAM_VFE_BUS_RD_VER1_VFE_BUSRD_MAX;
 	for (--i; i >= 0; i--)
 		cam_vfe_bus_deinit_vfe_bus_rd_resource(
 			&bus_priv->vfe_bus_rd[i]);

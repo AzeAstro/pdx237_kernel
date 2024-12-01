@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_MEM_MGR_H_
@@ -50,16 +50,15 @@ struct cam_presil_dmabuf_params {
  * @vaddr:          IOVA of buffer
  * @kmdvaddr:       Kernel virtual address
  * @active:         state of the buffer
- * @release_deferred: Buffer is deferred for release
+ * @release_deferred: Buffer is deferred for release.
  * @is_imported:    Flag indicating if buffer is imported from an FD in user space
  * @is_internal:    Flag indicating kernel allocated buffer
  * @timestamp:      Timestamp at which this entry in tbl was made
  * @krefcount:      Reference counter to track whether the buffer is
- *                  mapped and in use by kmd
+ *                  mapped and in use
  * @smmu_mapping_client: Client buffer (User or kernel)
+ * @buf_name:       Name associated with buffer.
  * @presil_params:  Parameters specific to presil environment
- * @urefcount:      Reference counter to track whether the buffer is
- *                  mapped and in use by umd
  */
 struct cam_mem_buf_queue {
 	struct dma_buf *dma_buf;
@@ -81,11 +80,11 @@ struct cam_mem_buf_queue {
 	struct timespec64 timestamp;
 	struct kref krefcount;
 	enum cam_smmu_mapping_client smmu_mapping_client;
+	char buf_name[CAM_DMA_BUF_NAME_LEN];
 
 #ifdef CONFIG_CAM_PRESIL
 	struct cam_presil_dmabuf_params presil_params;
 #endif
-	struct kref urefcount;
 };
 
 /**
@@ -95,8 +94,6 @@ struct cam_mem_buf_queue {
  * @bitmap: bitmap of the mem mgr utility
  * @bits: max bits of the utility
  * @bufq: array of buffers
- * @dentry: Debugfs entry
- * @alloc_profile_enable: Whether to enable alloc profiling
  * @dbg_buf_idx: debug buffer index to get usecases info
  * @force_cache_allocs: Force all internal buffer allocations with cache
  * @need_shared_buffer_padding: Whether padding is needed for shared buffer
@@ -106,14 +103,13 @@ struct cam_mem_buf_queue {
  * @camera_heap: Handle to camera heap
  * @camera_uncached_heap: Handle to camera uncached heap
  * @secure_display_heap: Handle to secure display heap
+ * @ubwc_p_heap: Handle to ubwc-p heap
  */
 struct cam_mem_table {
 	struct mutex m_lock;
 	void *bitmap;
 	size_t bits;
 	struct cam_mem_buf_queue bufq[CAM_MEM_BUFQ_MAX];
-	struct dentry *dentry;
-	bool alloc_profile_enable;
 	size_t dbg_buf_idx;
 	bool force_cache_allocs;
 	bool need_shared_buffer_padding;
@@ -123,6 +119,7 @@ struct cam_mem_table {
 	struct dma_heap *camera_heap;
 	struct dma_heap *camera_uncached_heap;
 	struct dma_heap *secure_display_heap;
+	struct dma_heap *ubwc_p_heap;
 #endif
 
 };
@@ -153,7 +150,7 @@ struct cam_mem_table_mini_dump {
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
-int cam_mem_mgr_alloc_and_map(struct cam_mem_mgr_alloc_cmd *cmd);
+int cam_mem_mgr_alloc_and_map(struct cam_mem_mgr_alloc_cmd_v2 *cmd);
 
 /**
  * @brief: Releases a buffer reference
@@ -171,7 +168,7 @@ int cam_mem_mgr_release(struct cam_mem_mgr_release_cmd *cmd);
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
-int cam_mem_mgr_map(struct cam_mem_mgr_map_cmd *cmd);
+int cam_mem_mgr_map(struct cam_mem_mgr_map_cmd_v2 *cmd);
 
 /**
  * @brief: Perform cache ops on the buffer
@@ -181,6 +178,22 @@ int cam_mem_mgr_map(struct cam_mem_mgr_map_cmd *cmd);
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
 int cam_mem_mgr_cache_ops(struct cam_mem_cache_ops_cmd *cmd);
+
+/**
+ * @brief: Perform cpu access ops on the buffer
+ *
+ * @cmd:   CPU access ops information
+ *
+ * @return Status of operation. Negative in case of error. Zero otherwise.
+ */
+int cam_mem_mgr_cpu_access_op(struct cam_mem_cpu_access_op *cmd);
+
+/**
+ * @brief: Check whether ubwc-p heap is supported
+ *
+ * @return true if supported, false otherwise
+ */
+bool cam_mem_mgr_ubwc_p_heap_supported(void);
 
 /**
  * @brief: Initializes the memory manager
@@ -195,6 +208,23 @@ int cam_mem_mgr_init(void);
  * @return None
  */
 void cam_mem_mgr_deinit(void);
+
+#ifdef CONFIG_CAM_PRESIL
+/**
+ * @brief: Put dma-buf for input dmabuf
+ *
+ * @return Status of operation. Negative in case of error. Zero otherwise.
+ */
+int cam_mem_mgr_put_dmabuf_from_fd(uint64_t input_dmabuf);
+
+/**
+ * @brief: Create a fd for dma-buf
+ *
+ * @return Status of operation. Negative in case of error. Zero or
+ *       Positive otherwise.
+ */
+int cam_mem_mgr_get_fd_from_dmabuf(uint64_t input_dmabuf);
+#endif /* ifdef CONFIG_CAM_PRESIL */
 
 /**
  * @brief: Copy buffer content to presil mem for all buffers of

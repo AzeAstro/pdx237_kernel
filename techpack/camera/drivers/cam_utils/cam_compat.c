@@ -5,17 +5,114 @@
  */
 
 #include <linux/dma-mapping.h>
+#include <linux/dma-buf.h>
 #include <linux/of_address.h>
 #include <linux/slab.h>
+
+#include <soc/qcom/rpmh.h>
 
 #include "cam_compat.h"
 #include "cam_debug_util.h"
 #include "cam_cpas_api.h"
 #include "camera_main.h"
 
-#if KERNEL_VERSION(5, 15, 0) <= LINUX_VERSION_CODE
+#if KERNEL_VERSION(5, 10, 0) <= LINUX_VERSION_CODE
 #include <soc/qcom/socinfo.h>
 #endif
+
+#if IS_ENABLED(CONFIG_USE_RPMH_DRV_API)
+#define CAM_RSC_DRV_IDENTIFIER "cam_rsc"
+
+const struct device *cam_cpas_get_rsc_dev_for_drv(uint32_t index)
+{
+	const struct device *rsc_dev;
+
+	rsc_dev = rpmh_get_device(CAM_RSC_DRV_IDENTIFIER, index);
+	if (!rsc_dev) {
+		CAM_ERR(CAM_CPAS, "Invalid dev for index: %u", index);
+		return NULL;
+	}
+
+	return rsc_dev;
+}
+
+int cam_cpas_start_drv_for_dev(const struct device *dev)
+{
+	int rc = 0;
+
+	if (!dev) {
+		CAM_ERR(CAM_CPAS, "Invalid dev for DRV enable");
+		return -EINVAL;
+	}
+
+	rc = rpmh_drv_start(dev);
+	if (rc) {
+		CAM_ERR(CAM_CPAS, "[%s] Failed in DRV start", dev_name(dev));
+		return rc;
+	}
+
+	return rc;
+}
+
+int cam_cpas_stop_drv_for_dev(const struct device *dev)
+{
+	int rc = 0;
+
+	if (!dev) {
+		CAM_ERR(CAM_CPAS, "Invalid dev for DRV disable");
+		return -EINVAL;
+	}
+
+	rc = rpmh_drv_stop(dev);
+	if (rc) {
+		CAM_ERR(CAM_CPAS, "[%s] Failed in DRV stop", dev_name(dev));
+		return rc;
+	}
+
+	return rc;
+}
+
+int cam_cpas_drv_channel_switch_for_dev(const struct device *dev)
+{
+	int rc = 0;
+
+	if (!dev) {
+		CAM_ERR(CAM_CPAS, "Invalid dev for DRV channel switch");
+		return -EINVAL;
+	}
+
+	rc = rpmh_write_sleep_and_wake_no_child(dev);
+	if (rc) {
+		CAM_ERR(CAM_CPAS, "[%s] Failed in DRV channel switch", dev_name(dev));
+		return rc;
+	}
+
+	return rc;
+}
+
+#else
+const struct device *cam_cpas_get_rsc_dev_for_drv(uint32_t index)
+{
+	return NULL;
+}
+
+int cam_cpas_start_drv_for_dev(const struct device *dev)
+
+{
+	return 0;
+}
+
+int cam_cpas_stop_drv_for_dev(const struct device *dev)
+{
+	return 0;
+}
+
+int cam_cpas_drv_channel_switch_for_dev(const struct device *dev)
+{
+	return 0;
+}
+#endif
+
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 int cam_reserve_icp_fw(struct cam_fw_alloc_info *icp_fw, size_t fw_length)
@@ -62,15 +159,13 @@ int cam_ife_notify_safe_lut_scm(bool safe_trigger)
 	uint32_t camera_hw_version, rc = 0;
 
 	rc = cam_cpas_get_cpas_hw_version(&camera_hw_version);
-	if (!rc) {
+	if (!rc && qcom_scm_smmu_notify_secure_lut(smmu_se_ife, safe_trigger)) {
 		switch (camera_hw_version) {
 		case CAM_CPAS_TITAN_170_V100:
 		case CAM_CPAS_TITAN_170_V110:
 		case CAM_CPAS_TITAN_175_V100:
-			if (qcom_scm_smmu_notify_secure_lut(smmu_se_ife, safe_trigger)) {
-				CAM_ERR(CAM_ISP, "scm call to enable safe failed");
-				rc = -EINVAL;
-			}
+			CAM_ERR(CAM_ISP, "scm call to enable safe failed");
+			rc = -EINVAL;
 			break;
 		default:
 			break;
@@ -89,8 +184,7 @@ int cam_csiphy_notify_secure_mode(struct csiphy_device *csiphy_dev,
 		CAM_ERR(CAM_CSIPHY, "Invalid CSIPHY offset");
 		rc = -EINVAL;
 	} else if (qcom_scm_camera_protect_phy_lanes(protect,
-			csiphy_dev->csiphy_info[offset]
-				.csiphy_cpas_cp_reg_mask)) {
+			csiphy_dev->csiphy_info[offset].csiphy_cpas_cp_reg_mask)) {
 		CAM_ERR(CAM_CSIPHY, "SCM call to hypervisor failed");
 		rc = -EINVAL;
 	}
@@ -149,15 +243,13 @@ int cam_ife_notify_safe_lut_scm(bool safe_trigger)
 	};
 
 	rc = cam_cpas_get_cpas_hw_version(&camera_hw_version);
-	if (!rc) {
+	if (!rc && scm_call2(SCM_SIP_FNID(0x15, 0x3), &description)) {
 		switch (camera_hw_version) {
 		case CAM_CPAS_TITAN_170_V100:
 		case CAM_CPAS_TITAN_170_V110:
 		case CAM_CPAS_TITAN_175_V100:
-			if (scm_call2(SCM_SIP_FNID(0x15, 0x3), &description)) {
-				CAM_ERR(CAM_ISP, "scm call to enable safe failed");
-				rc = -EINVAL;
-			}
+			CAM_ERR(CAM_ISP, "scm call to enable safe failed");
+			rc = -EINVAL;
 			break;
 		default:
 			break;
@@ -354,11 +446,15 @@ int cam_compat_util_get_dmabuf_va(struct dma_buf *dmabuf, uintptr_t *vaddr)
 	struct dma_buf_map mapping;
 	int error_code = dma_buf_vmap(dmabuf, &mapping);
 
-	if (error_code)
+	if (error_code) {
 		*vaddr = 0;
-	else
+	} else {
 		*vaddr = (mapping.is_iomem) ?
 			(uintptr_t)mapping.vaddr_iomem : (uintptr_t)mapping.vaddr;
+		CAM_DBG(CAM_MEM,
+			"dmabuf=%p, *vaddr=%p, is_iomem=%d, vaddr_iomem=%p, vaddr=%p",
+			dmabuf, *vaddr, mapping.is_iomem, mapping.vaddr_iomem, mapping.vaddr);
+	}
 
 	return error_code;
 }
@@ -370,13 +466,12 @@ void cam_compat_util_put_dmabuf_va(struct dma_buf *dmabuf, void *vaddr)
 	dma_buf_vunmap(dmabuf, &mapping);
 }
 
-int cam_get_ddr_type(void)
+void cam_i3c_driver_remove(struct i3c_device *client)
 {
-	/* We assume all chipsets running kernel version 5.15+
-	 * to be using only DDR5 based memory.
-	 */
-	return DDR_TYPE_LPDDR5;
+	CAM_DBG(CAM_SENSOR, "I3C remove invoked for %s",
+		(client ? dev_name(&client->dev) : "none"));
 }
+
 #else
 void cam_smmu_util_iommu_custom(struct device *dev,
 	dma_addr_t discard_start, size_t discard_length)
@@ -416,30 +511,43 @@ void cam_compat_util_put_dmabuf_va(struct dma_buf *dmabuf, void *vaddr)
 	dma_buf_vunmap(dmabuf, vaddr);
 }
 
-int cam_get_ddr_type(void)
+int cam_i3c_driver_remove(struct i3c_device *client)
 {
-	return of_fdt_get_ddrtype();
+	CAM_DBG(CAM_SENSOR, "I3C remove invoked for %s",
+		(client ? dev_name(&client->dev) : "none"));
+	return 0;
 }
 #endif
 
 #if KERNEL_VERSION(5, 15, 0) <= LINUX_VERSION_CODE
-int cam_get_subpart_info(uint32_t *part_info, uint32_t max_num_cam)
+long cam_dma_buf_set_name(struct dma_buf *dmabuf, const char *name)
+{
+	long ret = 0;
+
+	ret = dma_buf_set_name(dmabuf, name);
+
+	return ret;
+}
+#else
+long cam_dma_buf_set_name(struct dma_buf *dmabuf, const char *name)
+{
+	return 0;
+}
+#endif
+
+#if KERNEL_VERSION(5, 10, 0) <= LINUX_VERSION_CODE
+int cam_get_subpart_info(uint32_t *part_info, int *num_cam)
 {
 	int rc = 0;
-	int num_cam;
 
-	num_cam = socinfo_get_part_count(PART_CAMERA);
-	CAM_DBG(CAM_CPAS, "number of cameras: %d", num_cam);
-	if (num_cam != max_num_cam) {
-		CAM_ERR(CAM_CPAS, "Unsupported number of parts: %d", num_cam);
-		return -EINVAL;
-	}
+	*num_cam = socinfo_get_part_count(PART_CAMERA);
+	CAM_DBG(CAM_CPAS, "number of cameras: %d", *num_cam);
 
 	/*
 	 * If bit value in part_info is "0" then HW is available.
 	 * If bit value in part_info is "1" then HW is unavailable.
 	 */
-	rc = socinfo_get_subpart_info(PART_CAMERA, part_info, num_cam);
+	rc = socinfo_get_subpart_info(PART_CAMERA, part_info, *num_cam);
 	if (rc) {
 		CAM_ERR(CAM_CPAS, "Failed while getting subpart_info, rc = %d.", rc);
 		return rc;
@@ -448,7 +556,7 @@ int cam_get_subpart_info(uint32_t *part_info, uint32_t max_num_cam)
 	return 0;
 }
 #else
-int cam_get_subpart_info(uint32_t *part_info, uint32_t max_num_cam)
+int cam_get_subpart_info(uint32_t *part_info, int *num_cam)
 {
 	return 0;
 }

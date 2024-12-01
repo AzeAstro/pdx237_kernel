@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_COMMON_UTIL_H_
@@ -18,35 +19,66 @@
 #define CAM_COMMON_MINI_DUMP_SIZE         10 * 1024 * 1024
 
 #define CAM_COMMON_HW_DUMP_TAG_MAX_LEN 64
+#define CAM_MAX_NUM_CCI_PAYLOAD_BYTES     11
+
+#define CAM_COMMON_ERR_MODULE_PARAM_MAX_LENGTH  4096
+#define CAM_COMMON_ERR_INJECT_BUFFER_LEN  200
+#define CAM_COMMON_ERR_INJECT_DEV_MAX     5
+#define CAM_COMMON_ERR_INJECT_PARAM_NUM   5
+#define CAM_COMMON_IFE_NODE "IFE"
+#define CAM_COMMON_ICP_NODE "IPE"
+#define CAM_COMMON_JPEG_NODE "JPEG"
+#define CAM_COMMON_TFE_NODE "TFE"
+
+#define CAM_COMMON_NS_PER_MS              1000000ULL
 
 #define PTR_TO_U64(ptr) ((uint64_t)(uintptr_t)ptr)
 #define U64_TO_PTR(ptr) ((void *)(uintptr_t)ptr)
 
+#define CAM_TRIGGER_PANIC(format, args...) panic("CAMERA - " format "\n", ##args)
+
 #define CAM_GET_TIMESTAMP(timestamp) ktime_get_real_ts64(&(timestamp))
-#define CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, diff_microsec)         \
-({                                                                               \
-	diff_microsec = 0;                                                       \
-	if (ts_end.tv_nsec >= ts_start.tv_nsec) {                                \
-		diff_microsec =                                                  \
-			(ts_end.tv_nsec - ts_start.tv_nsec) / 1000;              \
-		diff_microsec +=                                                 \
-			(ts_end.tv_sec - ts_start.tv_sec) * 1000 * 1000;         \
-	} else {                                                                 \
-		diff_microsec =                                                  \
-			(ts_end.tv_nsec +                                        \
-			(1000*1000*1000 - ts_start.tv_nsec)) / 1000;             \
-		diff_microsec +=                                                 \
-			(ts_end.tv_sec - ts_start.tv_sec - 1) * 1000 * 1000;     \
-	}                                                                        \
+#define CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, diff_microsec)                     \
+({                                                                                           \
+	diff_microsec = 0;                                                                   \
+	if (ts_end.tv_nsec >= ts_start.tv_nsec) {                                            \
+		diff_microsec =                                                              \
+			(ts_end.tv_nsec - ts_start.tv_nsec) / 1000;                          \
+		diff_microsec +=                                                             \
+			(ts_end.tv_sec - ts_start.tv_sec) * 1000 * 1000;                     \
+	} else {                                                                             \
+		diff_microsec =                                                              \
+			(ts_end.tv_nsec +                                                    \
+			(1000*1000*1000 - ts_start.tv_nsec)) / 1000;                         \
+		diff_microsec +=                                                             \
+			(ts_end.tv_sec - ts_start.tv_sec - 1) * 1000 * 1000;                 \
+	}                                                                                    \
 })
 
-#define CAM_CONVERT_TIMESTAMP_FORMAT(ts, hrs, min, sec, ms)                      \
-({                                                                               \
-	uint64_t tmp = ((ts).tv_sec);                                            \
-	(ms) = ((ts).tv_nsec) / 1000000;                                         \
-	(sec) = do_div(tmp, 60);                                                 \
-	(min) = do_div(tmp, 60);                                                 \
-	(hrs) = do_div(tmp, 24);                                                 \
+#define CAM_CONVERT_TIMESTAMP_FORMAT(ts, hrs, min, sec, ms)                                  \
+({                                                                                           \
+	uint64_t tmp = ((ts).tv_sec);                                                        \
+	(ms) = ((ts).tv_nsec) / 1000000;                                                     \
+	(sec) = do_div(tmp, 60);                                                             \
+	(min) = do_div(tmp, 60);                                                             \
+	(hrs) = do_div(tmp, 24);                                                             \
+})
+
+#define CAM_COMMON_WAIT_FOR_COMPLETION_TIMEOUT_ERRMSG(complete, timeout_jiffies, module_id,  \
+	fmt, args...)                                                                        \
+({                                                                                           \
+	struct timespec64 start_time, end_time;                                              \
+	unsigned long rem_jiffies;                                                           \
+	start_time = ktime_to_timespec64(ktime_get());                                       \
+	rem_jiffies = cam_common_wait_for_completion_timeout((complete), (timeout_jiffies)); \
+	if (!rem_jiffies) {                                                                  \
+		end_time = ktime_to_timespec64(ktime_get());                                 \
+		CAM_ERR(module_id, fmt " (timeout: %ums start: %llu.%llu end: %llu.%llu)",   \
+		##args, jiffies_to_msecs(timeout_jiffies),                                   \
+		start_time.tv_sec, (start_time.tv_nsec/NSEC_PER_USEC),                       \
+		end_time.tv_sec, (end_time.tv_nsec/NSEC_PER_USEC));                          \
+	}                                                                                    \
+	rem_jiffies;                                                                         \
 })
 
 typedef unsigned long (*cam_common_mini_dump_cb) (void *dst, unsigned long len);
@@ -76,6 +108,55 @@ struct cam_common_mini_dump_data {
 	void          *waddr[CAM_COMMON_MINI_DUMP_DEV_NUM];
 	uint8_t        name[CAM_COMMON_MINI_DUMP_DEV_NUM][CAM_COMMON_MINI_DUMP_DEV_NAME_LEN];
 	unsigned long  size[CAM_COMMON_MINI_DUMP_DEV_NUM];
+};
+
+
+typedef int (*cam_common_err_inject_cb) (void *err_param);
+int cam_common_release_err_params(uint64_t dev_hdl);
+
+enum cam_common_err_inject_hw_id {
+	CAM_COMMON_ERR_INJECT_HW_IFE,
+	CAM_COMMON_ERR_INJECT_HW_TFE,
+	CAM_COMMON_ERR_INJECT_HW_ICP,
+	CAM_COMMON_ERR_INJECT_HW_JPEG,
+	CAM_COMMON_ERR_INJECT_HW_MAX
+};
+
+enum cam_common_err_inject_input_param_pos {
+	HW_NAME = 0,
+	REQ_ID,
+	ERR_TYPE,
+	ERR_CODE,
+	DEV_HDL
+};
+
+/**
+ * @req_id  : req id for err to be injected
+ * @dev_hdl : dev_hdl for the context
+ * @err_type: error type for error request
+ * @err_code: error code for error request
+ * @hw_id   : hw id representing hw nodes of type cam_common_err_inject_hw_id
+ */
+struct cam_err_inject_param {
+	struct list_head  list;
+	uint64_t          req_id;
+	uint64_t          dev_hdl;
+	uint32_t          err_type;
+	uint32_t          err_code;
+	uint8_t           hw_id;
+};
+/**
+ * struct cam_common_err_inject_info
+ * @err_inject_cb      : address of callback
+ * @active_err_ctx_list: list containing active err inject requests
+ * @num_hw_registered  : number of callbacks registered
+ * @is_list_initialised: bool to check init for err_inject list
+ */
+struct cam_common_err_inject_info {
+	cam_common_err_inject_cb    err_inject_cb[CAM_COMMON_ERR_INJECT_HW_MAX];
+	struct list_head            active_err_ctx_list;
+	uint8_t                     num_hw_registered;
+	bool                        is_list_initialised;
 };
 
 /**
@@ -196,13 +277,15 @@ int cam_common_modify_timer(struct timer_list *timer, int32_t timeout_val);
  *
  * @brief                  Detect if there is any scheduling delay
  *
- * @token:                 String identifier to print workq name or tasklet
+ * @wq_name:               workq name
+ * @state:                 either schedule or execution
+ * @cb:                    callback scheduled or executed
  * @scheduled_time:        Time when workq or tasklet was scheduled
  * @threshold:             Threshold time
  *
  */
-void cam_common_util_thread_switch_delay_detect(const char *token,
-	ktime_t scheduled_time, uint32_t threshold);
+void cam_common_util_thread_switch_delay_detect(char *wq_name, const char *state,
+	void *cb, ktime_t scheduled_time, uint32_t threshold);
 
 /**
  * cam_common_register_mini_dump_cb()
@@ -257,5 +340,19 @@ int cam_common_user_dump_helper(
 	size_t       size,
 	const char  *tag,
 	...);
+
+/**
+ * cam_common_register_err_inject_cb()
+ *
+ * @brief                  common interface to register error inject cb
+ *
+ * @err_inject_cb:         Pointer to err_inject_cb
+ * @hw_id:                 HW id of the HW driver registering
+ *
+ * @return:                0 if success in register non-zero if failes
+ */
+int cam_common_register_err_inject_cb(
+	cam_common_err_inject_cb err_inject_cb,
+	enum cam_common_err_inject_hw_id hw_id);
 
 #endif /* _CAM_COMMON_UTIL_H_ */

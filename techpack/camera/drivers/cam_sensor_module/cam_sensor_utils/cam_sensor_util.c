@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -15,6 +15,96 @@
 
 #define VALIDATE_VOLTAGE(min, max, config_val) ((config_val) && \
 	(config_val >= min) && (config_val <= max))
+
+int cam_sensor_count_elems_i3c_device_id(struct device_node *dev,
+	int *num_entries, char *sensor_id_table_str)
+{
+	if (!num_entries) {
+		CAM_ERR(CAM_SENSOR, "Num_entries ptr is null");
+		return -EINVAL;
+	}
+
+	if (!dev) {
+		CAM_ERR(CAM_SENSOR, "dev ptr is null");
+		return -EINVAL;
+	}
+
+	if (!sensor_id_table_str) {
+		CAM_ERR(CAM_SENSOR, "sebsor_id_table_str ptr is null");
+		return -EINVAL;
+	}
+
+	*num_entries = of_property_count_u32_elems(dev, sensor_id_table_str);
+	if (*num_entries <= 0) {
+		CAM_DBG(CAM_SENSOR, "Failed while reading the property. num_entries:%d",
+			*num_entries);
+		return -ENOENT;
+	}
+
+	if (*num_entries >= MAX_I3C_DEVICE_ID_ENTRIES) {
+		CAM_ERR(CAM_SENSOR, "Num_entries are more than MAX_I3C_DEVICE_ID_ENTRIES");
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+int cam_sensor_fill_i3c_device_id(struct device_node *dev, int num_entries,
+	char *sensor_id_table_str, struct i3c_device_id *sensor_i3c_device_id)
+{
+	int                                      i = 0;
+	uint8_t                                  ent_num = 0;
+	uint32_t                                 mid;
+	uint32_t                                 pid;
+	int                                      rc;
+
+	if (!dev) {
+		CAM_ERR(CAM_SENSOR, "dev ptr is null");
+		return -EINVAL;
+	}
+
+	if (!sensor_id_table_str) {
+		CAM_ERR(CAM_SENSOR, "sensor_id_table_str ptr is null");
+		return -EINVAL;
+	}
+
+	if (!sensor_i3c_device_id) {
+		CAM_ERR(CAM_SENSOR, "sensor_i3c_device_id ptr is null");
+		return -EINVAL;
+	}
+
+	while (i < num_entries) {
+		if (ent_num >= MAX_I3C_DEVICE_ID_ENTRIES) {
+			CAM_WARN(CAM_SENSOR, "Num_entries are more than MAX_I3C_DEVICE_ID_ENTRIES");
+			return -ENOMEM;
+		}
+
+		rc = of_property_read_u32_index(dev, sensor_id_table_str, i, &mid);
+		if (rc) {
+			CAM_ERR(CAM_SENSOR, "Failed in reading the MID. rc: %d", rc);
+			return rc;
+		}
+		i++;
+
+		rc = of_property_read_u32_index(dev, sensor_id_table_str, i, &pid);
+		if (rc) {
+			CAM_ERR(CAM_SENSOR, "Failed in reading the PID. rc: %d", rc);
+			return rc;
+		}
+		i++;
+
+		CAM_DBG(CAM_SENSOR, "PID: 0x%x, MID: 0x%x", pid, mid);
+
+		sensor_i3c_device_id[ent_num].manuf_id = mid;
+		sensor_i3c_device_id[ent_num].match_flags = I3C_MATCH_MANUF_AND_PART;
+		sensor_i3c_device_id[ent_num].part_id  = pid;
+		sensor_i3c_device_id[ent_num].data     = 0;
+
+		ent_num++;
+	}
+
+	return 0;
+}
 
 static struct i2c_settings_list*
 	cam_sensor_get_i2c_ptr(struct i2c_settings_array *i2c_reg_settings,
@@ -56,7 +146,7 @@ int32_t cam_sensor_util_get_current_qtimer_ns(uint64_t *qtime_ns)
 	if (qtime_ns != NULL) {
 		*qtime_ns = mul_u64_u32_div(ticks,
 			QTIMER_MUL_FACTOR, QTIMER_DIV_FACTOR);
-		CAM_DBG(CAM_SENSOR, "Qtimer time: 0x%x", *qtime_ns);
+		CAM_DBG(CAM_SENSOR, "Qtimer time: 0x%lx", *qtime_ns);
 	} else {
 		CAM_ERR(CAM_SENSOR, "NULL pointer passed");
 		return -EINVAL;
@@ -174,11 +264,10 @@ int32_t cam_sensor_handle_random_write(
 	struct list_head **list)
 {
 	struct i2c_settings_list  *i2c_list;
-	int32_t rc = 0, cnt, payload_count;
+	int32_t rc = 0, cnt;
 
-	payload_count = cam_cmd_i2c_random_wr->header.count;
 	i2c_list = cam_sensor_get_i2c_ptr(i2c_reg_settings,
-						payload_count);
+		cam_cmd_i2c_random_wr->header.count);
 	if (i2c_list == NULL ||
 		i2c_list->i2c_settings.reg_setting == NULL) {
 		CAM_ERR(CAM_SENSOR, "Failed in allocating i2c_list");
@@ -187,14 +276,15 @@ int32_t cam_sensor_handle_random_write(
 
 	*cmd_length_in_bytes = (sizeof(struct i2c_rdwr_header) +
 		sizeof(struct i2c_random_wr_payload) *
-		payload_count);
+		(cam_cmd_i2c_random_wr->header.count));
 	i2c_list->op_code = CAM_SENSOR_I2C_WRITE_RANDOM;
 	i2c_list->i2c_settings.addr_type =
 		cam_cmd_i2c_random_wr->header.addr_type;
 	i2c_list->i2c_settings.data_type =
 		cam_cmd_i2c_random_wr->header.data_type;
 
-	for (cnt = 0; cnt < payload_count; cnt++) {
+	for (cnt = 0; cnt < (cam_cmd_i2c_random_wr->header.count);
+		cnt++) {
 		i2c_list->i2c_settings.reg_setting[cnt].reg_addr =
 			cam_cmd_i2c_random_wr->random_wr_payload[cnt].reg_addr;
 		i2c_list->i2c_settings.reg_setting[cnt].reg_data =
@@ -214,11 +304,10 @@ static int32_t cam_sensor_handle_continuous_write(
 	struct list_head **list)
 {
 	struct i2c_settings_list *i2c_list;
-	int32_t rc = 0, cnt, payload_count;
+	int32_t rc = 0, cnt;
 
-	payload_count = cam_cmd_i2c_continuous_wr->header.count;
 	i2c_list = cam_sensor_get_i2c_ptr(i2c_reg_settings,
-						payload_count);
+		cam_cmd_i2c_continuous_wr->header.count);
 	if (i2c_list == NULL ||
 		i2c_list->i2c_settings.reg_setting == NULL) {
 		CAM_ERR(CAM_SENSOR, "Failed in allocating i2c_list");
@@ -228,7 +317,7 @@ static int32_t cam_sensor_handle_continuous_write(
 	*cmd_length_in_bytes = (sizeof(struct i2c_rdwr_header) +
 		sizeof(cam_cmd_i2c_continuous_wr->reg_addr) +
 		sizeof(struct cam_cmd_read) *
-		(payload_count));
+		(cam_cmd_i2c_continuous_wr->header.count));
 	if (cam_cmd_i2c_continuous_wr->header.op_code ==
 		CAMERA_SENSOR_I2C_OP_CONT_WR_BRST)
 		i2c_list->op_code = CAM_SENSOR_I2C_WRITE_BURST;
@@ -245,7 +334,8 @@ static int32_t cam_sensor_handle_continuous_write(
 	i2c_list->i2c_settings.size =
 		cam_cmd_i2c_continuous_wr->header.count;
 
-	for (cnt = 0; cnt < payload_count; cnt++) {
+	for (cnt = 0; cnt < (cam_cmd_i2c_continuous_wr->header.count);
+		cnt++) {
 		i2c_list->i2c_settings.reg_setting[cnt].reg_addr =
 			cam_cmd_i2c_continuous_wr->reg_addr;
 		i2c_list->i2c_settings.reg_setting[cnt].reg_data =
@@ -367,11 +457,10 @@ static int32_t cam_sensor_handle_random_read(
 	struct cam_buf_io_cfg *io_cfg)
 {
 	struct i2c_settings_list *i2c_list;
-	int32_t rc = 0, cnt = 0, payload_count = 0;
+	int32_t rc = 0, cnt = 0;
 
-	payload_count = cmd_i2c_random_rd->header.count;
 	i2c_list = cam_sensor_get_i2c_ptr(i2c_reg_settings,
-		payload_count);
+		cmd_i2c_random_rd->header.count);
 	if ((i2c_list == NULL) ||
 		(i2c_list->i2c_settings.reg_setting == NULL)) {
 		CAM_ERR(CAM_SENSOR,
@@ -386,7 +475,7 @@ static int32_t cam_sensor_handle_random_read(
 	} else {
 		*cmd_length_in_bytes = sizeof(struct i2c_rdwr_header) +
 			(sizeof(struct cam_cmd_read) *
-			payload_count);
+			(cmd_i2c_random_rd->header.count));
 		i2c_list->op_code = CAM_SENSOR_I2C_READ_RANDOM;
 		i2c_list->i2c_settings.addr_type =
 			cmd_i2c_random_rd->header.addr_type;
@@ -395,7 +484,8 @@ static int32_t cam_sensor_handle_random_read(
 		i2c_list->i2c_settings.size =
 			cmd_i2c_random_rd->header.count;
 
-		for (cnt = 0; cnt < payload_count; cnt++) {
+		for (cnt = 0; cnt < (cmd_i2c_random_rd->header.count);
+			cnt++) {
 			i2c_list->i2c_settings.reg_setting[cnt].reg_addr =
 				cmd_i2c_random_rd->data_read[cnt].reg_data;
 		}
@@ -649,13 +739,19 @@ int cam_sensor_i2c_command_parser(
 				break;
 			}
 			case CAMERA_SENSOR_CMD_TYPE_WAIT: {
-				if ((remain_len - byte_cnt) <
-				sizeof(struct cam_cmd_unconditional_wait)) {
+				if ((((generic_op_code == CAMERA_SENSOR_WAIT_OP_HW_UCND) ||
+					(generic_op_code == CAMERA_SENSOR_WAIT_OP_SW_UCND)) &&
+					((remain_len - byte_cnt) <
+					sizeof(struct cam_cmd_unconditional_wait))) ||
+					((generic_op_code == CAMERA_SENSOR_WAIT_OP_COND) &&
+					((remain_len - byte_cnt) <
+					sizeof(struct cam_cmd_conditional_wait)))) {
 					CAM_ERR(CAM_SENSOR,
 						"Not enough buffer space");
 					rc = -EINVAL;
 					goto end;
 				}
+
 				if (generic_op_code ==
 					CAMERA_SENSOR_WAIT_OP_HW_UCND ||
 					generic_op_code ==
@@ -923,7 +1019,8 @@ int32_t cam_sensor_i2c_read_data(
 					reg_setting->reg_addr,
 					&reg_setting->reg_data,
 					i2c_list->i2c_settings.addr_type,
-					i2c_list->i2c_settings.data_type);
+					i2c_list->i2c_settings.data_type,
+					false);
 				if (rc < 0) {
 					CAM_ERR(CAM_SENSOR,
 					"Failed: random read I2C settings: %d",
@@ -997,6 +1094,8 @@ int32_t msm_camera_fill_vreg_params(
 			return -EINVAL;
 		}
 
+		power_setting[i].valid_config = false;
+
 		switch (power_setting[i].seq_type) {
 		case SENSOR_VDIG:
 			for (j = 0; j < num_vreg; j++) {
@@ -1010,11 +1109,9 @@ int32_t msm_camera_fill_vreg_params(
 					if (VALIDATE_VOLTAGE(
 						soc_info->rgltr_min_volt[j],
 						soc_info->rgltr_max_volt[j],
-						power_setting[i].config_val)) {
-						soc_info->rgltr_min_volt[j] =
-						soc_info->rgltr_max_volt[j] =
-						power_setting[i].config_val;
-					}
+						power_setting[i].config_val))
+						power_setting[i].valid_config = true;
+
 					break;
 				}
 			}
@@ -1034,11 +1131,9 @@ int32_t msm_camera_fill_vreg_params(
 					if (VALIDATE_VOLTAGE(
 						soc_info->rgltr_min_volt[j],
 						soc_info->rgltr_max_volt[j],
-						power_setting[i].config_val)) {
-						soc_info->rgltr_min_volt[j] =
-						soc_info->rgltr_max_volt[j] =
-						power_setting[i].config_val;
-					}
+						power_setting[i].config_val))
+						power_setting[i].valid_config = true;
+
 					break;
 				}
 
@@ -1059,11 +1154,9 @@ int32_t msm_camera_fill_vreg_params(
 					if (VALIDATE_VOLTAGE(
 						soc_info->rgltr_min_volt[j],
 						soc_info->rgltr_max_volt[j],
-						power_setting[i].config_val)) {
-						soc_info->rgltr_min_volt[j] =
-						soc_info->rgltr_max_volt[j] =
-						power_setting[i].config_val;
-					}
+						power_setting[i].config_val))
+						power_setting[i].valid_config = true;
+
 					break;
 				}
 
@@ -1083,11 +1176,9 @@ int32_t msm_camera_fill_vreg_params(
 					if (VALIDATE_VOLTAGE(
 						soc_info->rgltr_min_volt[j],
 						soc_info->rgltr_max_volt[j],
-						power_setting[i].config_val)) {
-						soc_info->rgltr_min_volt[j] =
-						soc_info->rgltr_max_volt[j] =
-						power_setting[i].config_val;
-					}
+						power_setting[i].config_val))
+						power_setting[i].valid_config = true;
+
 					break;
 				}
 			}
@@ -1107,11 +1198,8 @@ int32_t msm_camera_fill_vreg_params(
 					if (VALIDATE_VOLTAGE(
 						soc_info->rgltr_min_volt[j],
 						soc_info->rgltr_max_volt[j],
-						power_setting[i].config_val)) {
-						soc_info->rgltr_min_volt[j] =
-						soc_info->rgltr_max_volt[j] =
-						power_setting[i].config_val;
-					}
+						power_setting[i].config_val))
+						power_setting[i].valid_config = true;
 
 					break;
 				}
@@ -1133,11 +1221,9 @@ int32_t msm_camera_fill_vreg_params(
 					if (VALIDATE_VOLTAGE(
 						soc_info->rgltr_min_volt[j],
 						soc_info->rgltr_max_volt[j],
-						power_setting[i].config_val)) {
-						soc_info->rgltr_min_volt[j] =
-						soc_info->rgltr_max_volt[j] =
-						power_setting[i].config_val;
-					}
+						power_setting[i].config_val))
+						power_setting[i].valid_config = true;
+
 					break;
 				}
 
@@ -1157,11 +1243,9 @@ int32_t msm_camera_fill_vreg_params(
 					if (VALIDATE_VOLTAGE(
 						soc_info->rgltr_min_volt[j],
 						soc_info->rgltr_max_volt[j],
-						power_setting[i].config_val)) {
-						soc_info->rgltr_min_volt[j] =
-						soc_info->rgltr_max_volt[j] =
-						power_setting[i].config_val;
-					}
+						power_setting[i].config_val))
+						power_setting[i].valid_config = true;
+
 					break;
 				}
 			}
@@ -1302,29 +1386,22 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 	int32_t i = 0, pwr_up = 0, pwr_down = 0;
 	struct cam_sensor_power_setting *pwr_settings;
 	void *ptr = cmd_buf, *scr;
+	struct cam_cmd_power *pwr_cmd = (struct cam_cmd_power *)cmd_buf;
 	struct common_header *cmm_hdr = (struct common_header *)cmd_buf;
-	struct cam_cmd_power *pwr_cmd =
-		kzalloc(sizeof(struct cam_cmd_power), GFP_KERNEL);
-	if (!pwr_cmd)
-		return -ENOMEM;
-	memcpy(pwr_cmd, cmd_buf, sizeof(struct cam_cmd_power));
 
 	if (!pwr_cmd || !cmd_length || cmd_buf_len < (size_t)cmd_length ||
 		cam_sensor_validate(cmd_buf, cmd_buf_len)) {
 		CAM_ERR(CAM_SENSOR, "Invalid Args: pwr_cmd %pK, cmd_length: %d",
 			pwr_cmd, cmd_length);
-		rc = -EINVAL;
-		goto free_power_command;
+		return -EINVAL;
 	}
 
 	power_info->power_setting_size = 0;
 	power_info->power_setting =
 		kzalloc(sizeof(struct cam_sensor_power_setting) *
 			MAX_POWER_CONFIG, GFP_KERNEL);
-	if (!power_info->power_setting) {
-		rc = -ENOMEM;
-		goto free_power_command;
-	}
+	if (!power_info->power_setting)
+		return -ENOMEM;
 
 	power_info->power_down_setting_size = 0;
 	power_info->power_down_setting =
@@ -1334,8 +1411,7 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 		kfree(power_info->power_setting);
 		power_info->power_setting = NULL;
 		power_info->power_setting_size = 0;
-		rc = -ENOMEM;
-		goto free_power_command;
+		return -ENOMEM;
 	}
 
 	while (tot_size < cmd_length) {
@@ -1519,7 +1595,7 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 		}
 	}
 
-	goto free_power_command;
+	return rc;
 free_power_settings:
 	kfree(power_info->power_down_setting);
 	kfree(power_info->power_setting);
@@ -1527,9 +1603,6 @@ free_power_settings:
 	power_info->power_setting = NULL;
 	power_info->power_down_setting_size = 0;
 	power_info->power_setting_size = 0;
-free_power_command:
-	kfree(pwr_cmd);
-	pwr_cmd = NULL;
 	return rc;
 }
 
@@ -1997,12 +2070,15 @@ static int cam_config_mclk_reg(struct cam_sensor_power_ctrl_t *ctrl,
 }
 
 int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
-		struct cam_hw_soc_info *soc_info)
+		struct cam_hw_soc_info *soc_info, struct completion *i3c_probe_status)
 {
 	int rc = 0, index = 0, no_gpio = 0, ret = 0, num_vreg, j = 0, i = 0;
 	int32_t vreg_idx = -1;
 	struct cam_sensor_power_setting *power_setting = NULL;
 	struct msm_camera_gpio_num_info *gpio_num_info = NULL;
+	long                             time_left;
+	uint32_t                         seq_min_volt = 0;
+	uint32_t                         seq_max_volt = 0;
 
 	CAM_DBG(CAM_SENSOR, "Enter");
 	if (!ctrl) {
@@ -2174,11 +2250,19 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 					goto power_up_failed;
 				}
 
+				if (power_setting->valid_config) {
+					seq_min_volt = power_setting->config_val;
+					seq_max_volt = power_setting->config_val;
+				} else {
+					seq_min_volt = soc_info->rgltr_min_volt[vreg_idx];
+					seq_max_volt = soc_info->rgltr_max_volt[vreg_idx];
+				}
+
 				rc =  cam_soc_util_regulator_enable(
 					soc_info->rgltr[vreg_idx],
 					soc_info->rgltr_name[vreg_idx],
-					soc_info->rgltr_min_volt[vreg_idx],
-					soc_info->rgltr_max_volt[vreg_idx],
+					seq_min_volt,
+					seq_max_volt,
 					soc_info->rgltr_op_mode[vreg_idx],
 					soc_info->rgltr_delay[vreg_idx]);
 				if (rc) {
@@ -2213,6 +2297,17 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 		else if (power_setting->delay)
 			usleep_range(power_setting->delay * 1000,
 				(power_setting->delay * 1000) + 1000);
+	}
+
+	if (i3c_probe_status) {
+		time_left = cam_common_wait_for_completion_timeout(
+			i3c_probe_status,
+			msecs_to_jiffies(CAM_I3C_DEV_PROBE_TIMEOUT_MS));
+		if (!time_left) {
+			CAM_ERR(CAM_SENSOR, "Wait for I3C probe timedout");
+			rc = -ETIMEDOUT;
+			goto power_up_failed;
+		}
 	}
 
 	return 0;

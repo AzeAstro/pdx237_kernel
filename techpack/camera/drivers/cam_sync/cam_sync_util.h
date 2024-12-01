@@ -14,6 +14,24 @@
 extern struct sync_device *sync_dev;
 
 /**
+ * struct cam_sync_check_for_dma_release -
+ *                          Checks if the dma fence being released
+ *                          was created with the sync obj
+ *
+ * @dma_fence_row_idx     : Get DMA fence row idx that is associated with
+ *                          the sync obj
+ * @dma_fence_fd          : Check if DMA fence fd is associated with
+ *                          sync obj
+ * @sync_created_with_dma : Set if the dma fence fd was created
+ *                          with sync obj
+ */
+struct cam_sync_check_for_dma_release {
+	int32_t dma_fence_row_idx;
+	int32_t dma_fence_fd;
+	bool sync_created_with_dma;
+};
+
+/**
  * @brief: Finds an empty row in the sync table and sets its corresponding bit
  * in the bit array
  *
@@ -43,12 +61,14 @@ int cam_sync_init_row(struct sync_table_row *table,
 /**
  * @brief: Function to uninitialize a row in the sync table
  *
- * @param table : Pointer to the sync objects table
- * @param idx   : Index of row to initialize
+ * @param table                          : Pointer to the sync objects table
+ * @param idx                            : Index of row to initialize
+ * @optional param check_for_dma_release : checks for dma fence release
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
-int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx);
+int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx,
+	struct cam_sync_check_for_dma_release *check_for_dma_release);
 
 /**
  * @brief: Function to initialize a row in the sync table when the object is a
@@ -66,8 +86,6 @@ int cam_sync_init_group_object(struct sync_table_row *table,
 	uint32_t idx,
 	uint32_t *sync_objs,
 	uint32_t num_objs);
-
-int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx);
 
 /**
  * @brief: Function to dispatch a kernel callback for a sync callback
@@ -144,31 +162,5 @@ void cam_sync_util_cleanup_children_list(struct sync_table_row *row,
  */
 void cam_sync_util_cleanup_parents_list(struct sync_table_row *row,
 	uint32_t list_clean_type, uint32_t sync_obj);
-
-/**
- * @brief: Function to initialize wait reference count
- * @sync_obj:           : Sync object
- *
- * @return 0 for success or negative error value for erros
- */
-int cam_sync_init_wait_ref(uint32_t sync_obj);
-
-/**
- * @brief: Function to increase wait reference count
- * @sync_obj:           : Sync object
- *
- * @return 0 for sucCess or negative error value for erros
- */
-
-int cam_sync_get_wait_ref(uint32_t sync_obj);
-
-/**
- * @brief: Function to decrease wait reference count
- * @sync_obj:           : Sync object
- *
- * @return 0 for success or negative error value for erros
- */
-
-int cam_sync_put_wait_ref(uint32_t sync_obj);
 
 #endif /* __CAM_SYNC_UTIL_H__ */

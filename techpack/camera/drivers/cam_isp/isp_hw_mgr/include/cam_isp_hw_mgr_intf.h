@@ -12,24 +12,26 @@
 #include <linux/list.h>
 #include <media/cam_isp.h>
 #include "cam_hw_mgr_intf.h"
+#include "cam_packet_util.h"
+#include "cam_cpas_api.h"
 
 /* MAX IFE instance */
 #define CAM_IFE_HW_NUM_MAX               8
-#define CAM_SFE_HW_NUM_MAX               2
+#define CAM_SFE_HW_NUM_MAX               3
 #define CAM_IFE_RDI_NUM_MAX              4
 #define CAM_SFE_RDI_NUM_MAX              5
 #define CAM_SFE_FE_RDI_NUM_MAX           3
 #define CAM_ISP_BW_CONFIG_V1             1
 #define CAM_ISP_BW_CONFIG_V2             2
-#define CAM_TFE_HW_NUM_MAX               3
+#define CAM_ISP_BW_CONFIG_V3             2
+#define CAM_TFE_HW_NUM_MAX               4
 #define CAM_TFE_RDI_NUM_MAX              3
 #define CAM_IFE_SCRATCH_NUM_MAX          2
-#define CAM_ISP_BUS_COMP_NUM_MAX         18
-#define CAM_SFE_BUS_COMP_NUM_MAX         12
 #define CAM_TFE_BW_LIMITER_CONFIG_V1     1
 
+
 /* maximum context numbers for TFE */
-#define CAM_TFE_CTX_MAX      4
+#define CAM_TFE_CTX_MAX      6
 
 /* maximum context numbers for IFE */
 #define CAM_IFE_CTX_MAX      8
@@ -44,12 +46,15 @@
 #define CAM_IFE_CTX_APPLY_DEFAULT_CFG  BIT(3)
 #define CAM_IFE_CTX_SFE_EN             BIT(4)
 #define CAM_IFE_CTX_AEB_EN             BIT(5)
+#define CAM_IFE_CTX_DYNAMIC_SWITCH_EN  BIT(6)
+#define CAM_IFE_CTX_SHDR_EN            BIT(7)
+#define CAM_IFE_CTX_SHDR_IS_MASTER     BIT(8)
 
 /*
  * Maximum configuration entry size  - This is based on the
  * worst case DUAL IFE use case plus some margin.
  */
-#define CAM_ISP_CTX_CFG_MAX                     25
+#define CAM_ISP_CTX_CFG_MAX                     30
 
 /*
  * Maximum configuration entry size including SFE & CSID - This is based on the
@@ -182,9 +187,9 @@ struct cam_isp_clock_config_internal {
  * @axi_path                    per path vote info
  */
 struct cam_isp_bw_config_internal_v2 {
-	uint32_t                          usage_type;
-	uint32_t                          num_paths;
-	struct cam_axi_per_path_bw_vote   axi_path[CAM_ISP_MAX_PER_PATH_VOTES];
+	uint32_t                               usage_type;
+	uint32_t                               num_paths;
+	struct cam_cpas_axi_per_path_bw_vote   axi_path[CAM_ISP_MAX_PER_PATH_VOTES];
 };
 
 /**
@@ -239,11 +244,14 @@ struct cam_isp_bw_clk_config_info {
  * @frame_header_iova:      Frame header iova
  * @frame_header_res_id:    Out port res_id corresponding to frame header
  * @bw_clk_config:          BW and clock config info
+ * @isp_drv_config:         DRV config info
+ * @bw_config_valid:        Flag indicating if DRV config is valid for current request
  * @reg_dump_buf_desc:     cmd buffer descriptors for reg dump
  * @num_reg_dump_buf:      Count of descriptors in reg_dump_buf_desc
  * @packet:                CSL packet from user mode driver
  * @mup_val:               MUP value if configured
  * @num_exp:               Num of exposures
+ * @wm_bitmask:            Bitmask of acquired out resource
  * @mup_en:                Flag if dynamic sensor switch is enabled
  *
  */
@@ -254,43 +262,19 @@ struct cam_isp_prepare_hw_update_data {
 	uint64_t                              frame_header_iova;
 	uint32_t                              frame_header_res_id;
 	struct cam_isp_bw_clk_config_info     bw_clk_config;
+	struct cam_isp_drv_config             isp_drv_config;
+	bool                                  drv_config_valid;
 	struct cam_cmd_buf_desc               reg_dump_buf_desc[
 						CAM_REG_DUMP_MAX_BUF_ENTRIES];
 	uint32_t                              num_reg_dump_buf;
 	struct cam_packet                    *packet;
+	struct cam_kmd_buf_info               kmd_cmd_buff_info;
 	uint32_t                              mup_val;
 	uint32_t                              num_exp;
+	uint64_t                              wm_bitmask;
 	bool                                  mup_en;
 };
 
-/**
- * struct cam_isp_hw_comp_record:
- *
- * @brief:              Structure record the res id reserved on a comp group
- *
- * @num_res:            Number of valid resource IDs in this record
- * @res_id:             Resource IDs to report buf dones
- * @last_consumed_addr: Last consumed addr for resource ID at that index
- *
- */
-struct cam_isp_hw_comp_record {
-	uint32_t num_res;
-	uint32_t res_id[CAM_NUM_OUT_PER_COMP_IRQ_MAX];
-};
-
-/**
- * struct cam_isp_comp_record_query:
- *
- * @brief:              Structure record the bus comp group pointer information
- *
- * @isp_bus_comp_grp:   Vfe/Tfe bus comp group pointer
- * @sfe_bus_comp_grp:   Sfe bus comp group pointer
- *
- */
-struct cam_isp_comp_record_query {
-	struct cam_isp_hw_comp_record        *isp_bus_comp_grp;
-	struct cam_isp_hw_comp_record        *sfe_bus_comp_grp;
-};
 
 /**
  * struct cam_isp_hw_sof_event_data - Event payload for CAM_HW_EVENT_SOF
@@ -329,19 +313,19 @@ struct cam_isp_hw_epoch_event_data {
 /**
  * struct cam_isp_hw_done_event_data - Event payload for CAM_HW_EVENT_DONE
  *
- * @hw_type:             Hw type sending the event
- * @resource_handle:     Resource handle
- * @comp_group_id:       Bus comp group id
- * @last_consumed_addr:  Last consumed addr
- * @timestamp:           Timestamp for the buf done event
+ * @num_handles:           Number of resource handeles
+ * @resource_handle:       Resource handle array
+ * @last_consumed_addr:    Last consumed addr
+ * @timestamp:             Timestamp for the buf done event
  *
  */
 struct cam_isp_hw_done_event_data {
-	uint32_t             hw_type;
-	uint32_t             resource_handle;
-	uint32_t             comp_group_id;
-	uint32_t             last_consumed_addr;
-	uint64_t             timestamp;
+	uint32_t             num_handles;
+	uint32_t             resource_handle[
+				CAM_NUM_OUT_PER_COMP_IRQ_MAX];
+	uint32_t             last_consumed_addr[
+				CAM_NUM_OUT_PER_COMP_IRQ_MAX];
+	uint64_t       timestamp;
 };
 
 /**
@@ -357,19 +341,19 @@ struct cam_isp_hw_eof_event_data {
 /**
  * struct cam_isp_hw_error_event_data - Event payload for CAM_HW_EVENT_ERROR
  *
- * @error_type:            Error type for the error event
- * @error_code:            HW Error Code that caused to trigger this event
+ * @error_type:            HW error type for the error event
  * @timestamp:             Timestamp for the error event
  * @recovery_enabled:      Identifies if the context needs to recover & reapply
  *                         this request
  * @enable_req_dump:       Enable request dump on HW errors
+ * @try_internal_recovery: Enable internal recovery on HW errors
  */
 struct cam_isp_hw_error_event_data {
 	uint32_t             error_type;
-	uint32_t             error_code;
 	uint64_t             timestamp;
 	bool                 recovery_enabled;
 	bool                 enable_req_dump;
+	bool                 try_internal_recovery;
 };
 
 /**
@@ -395,7 +379,6 @@ enum cam_isp_hw_mgr_command {
 	CAM_ISP_HW_MGR_GET_SOF_TS,
 	CAM_ISP_HW_MGR_DUMP_STREAM_INFO,
 	CAM_ISP_HW_MGR_CMD_UPDATE_CLOCK,
-	CAM_ISP_HW_MGR_GET_BUS_COMP_GROUP,
 	CAM_ISP_HW_MGR_CMD_MAX,
 };
 
@@ -452,12 +435,29 @@ struct cam_isp_start_args {
  * struct cam_isp_lcr_rdi_cfg_args - isp hardware start arguments
  *
  * @rdi_lcr_cfg:            RDI LCR cfg received from User space.
+ * @ife_src_res_id:         IFE SRC res id to be used in sfe context
  * @is_init:                Flag to indicate if init packet.
  *
  */
 struct cam_isp_lcr_rdi_cfg_args {
 	struct cam_isp_lcr_rdi_config *rdi_lcr_cfg;
+	uint32_t                       ife_src_res_id;
 	bool                           is_init;
+};
+
+
+/**
+ * struct cam_isp_mode_switch_data - isp hardware mode update arguments
+ *
+ * @mup                 Mup value
+ * @num_expoures        Number of exposures
+ * @mup_en              Flag to indicate if mup is enable
+ *
+ */
+struct cam_isp_mode_switch_data {
+	uint32_t                      mup;
+	uint32_t                      num_expoures;
+	bool                          mup_en;
 };
 
 /**

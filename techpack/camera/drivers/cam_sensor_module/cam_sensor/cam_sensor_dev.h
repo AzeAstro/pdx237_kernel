@@ -28,16 +28,9 @@
 
 #define NUM_MASTERS 2
 #define NUM_QUEUES 2
-
-#undef CDBG
-#ifdef CAM_SENSOR_DEBUG
-#define CDBG(fmt, args...) pr_err(fmt, ##args)
-#else
-#define CDBG(fmt, args...) pr_debug(fmt, ##args)
-#endif
-
-#define SENSOR_DRIVER_I2C "cam-i2c-sensor"
-#define CAMX_SENSOR_DEV_NAME "cam-sensor-driver"
+#define SENSOR_DRIVER_I2C                          "cam-i2c-sensor"
+#define CAMX_SENSOR_DEV_NAME                       "cam-sensor-driver"
+#define SENSOR_DRIVER_I3C                          "i3c_camera_sensor"
 
 enum cam_sensor_state_t {
 	CAM_SENSOR_INIT,
@@ -68,13 +61,22 @@ struct sensor_intf_params {
  * @res_index        : The resolution index that gets updated
  *                     during a mode switch
  * @feature_mask     : Feature mask
+ * @fps              : Frame rate
+ * @width            : Pixel width to output to csiphy
+ * @height           : Pixel height to output to csiphy
  * request_id        : Request Id
+ * @caps             : Specifies capability sensor is configured
+ *                     for, (eg, XCFA, HFR), num_exposures and
+ *                     PDAF type
  */
 struct cam_sensor_dev_res_info {
 	uint16_t   res_index;
-	uint32_t   num_batched_frames;
 	uint16_t   feature_mask;
+	uint32_t   fps;
+	uint32_t   width;
+	uint32_t   height;
 	int64_t    request_id;
+	char       caps[64];
 };
 
 /**
@@ -83,12 +85,14 @@ struct cam_sensor_dev_res_info {
  * @pdev: Platform device
  * @cam_sensor_mutex: Sensor mutex
  * @sensordata: Sensor board Information
- * @sensor_res: Sensor resolution information
+ * @sensor_res: Sensor resolution index and other info
+ *              accompanying a mode index switch
  * @cci_i2c_master: I2C structure
  * @io_master_info: Information about the communication master
  * @sensor_state: Sensor states
  * @is_probe_succeed: Probe succeeded or not
  * @id: Cell Index
+ * @is_i3c_device: A Flag to indicate whether this sensor is an I3C Device.
  * @of_node: Of node ptr
  * @v4l2_dev_str: V4L2 device structure
  * @sensor_probe_addr_type: Sensor probe address type
@@ -102,25 +106,31 @@ struct cam_sensor_dev_res_info {
  * @bob_pwm_switch: Boolean flag to switch into PWM mode for BoB regulator
  * @last_flush_req: Last request to flush
  * @pipeline_delay: Sensor pipeline delay
- * @batch_number: Number of batched frames
+ * @modeswitch_delay: Mode switch delay
  * @sensor_name: Sensor name
- * @is_aon_user: To determine whether sensor is AON user or not
+ * @aon_camera_id: AON Camera ID associated with this sensor
+ * @last_applied_req: Last updated request id
+ * @last_applied_req: Last applied request id
+ * @num_batched_frames: Number batched frames
+ * @is_stopped_by_user: Indicate if sensor has been stopped by userland
+ * @stream_off_after_eof: Indicates if sensor needs to stream off after eof
  * @hw_no_ops: To determine whether HW operations need to be disabled
+ * @is_res_info_updated: Indicate if resolution info is updated
  */
 struct cam_sensor_ctrl_t {
-	char                           device_name[
-		CAM_CTX_DEV_NAME_MAX_LENGTH];
+	char                           device_name[CAM_CTX_DEV_NAME_MAX_LENGTH];
 	struct platform_device        *pdev;
 	struct cam_hw_soc_info         soc_info;
 	struct mutex                   cam_sensor_mutex;
 	struct cam_sensor_board_info  *sensordata;
-	struct cam_sensor_dev_res_info sensor_res;
+	struct cam_sensor_dev_res_info sensor_res[MAX_PER_FRAME_ARRAY];
 	enum cci_i2c_master_t          cci_i2c_master;
 	enum cci_device_num            cci_num;
 	struct camera_io_master        io_master_info;
 	enum cam_sensor_state_t        sensor_state;
 	uint8_t                        is_probe_succeed;
 	uint32_t                       id;
+	bool                           is_i3c_device;
 	struct device_node            *of_node;
 	struct cam_subdev              v4l2_dev_str;
 	uint8_t                        sensor_probe_addr_type;
@@ -134,11 +144,16 @@ struct cam_sensor_ctrl_t {
 	bool                           bob_pwm_switch;
 	uint32_t                       last_flush_req;
 	uint16_t                       pipeline_delay;
-	uint32_t                       batch_number;
-	char                           sensor_name[
-		CAM_SENSOR_NAME_MAX_SIZE];
-	bool                           is_aon_user;
+	uint16_t                       modeswitch_delay;
+	char                           sensor_name[CAM_SENSOR_NAME_MAX_SIZE];
+	uint8_t                        aon_camera_id;
+	int64_t                        last_updated_req;
+	int64_t                        last_applied_req;
+	uint32_t                       num_batched_frames;
+	bool                           is_stopped_by_user;
+	bool                           stream_off_after_eof;
 	bool                           hw_no_ops;
+	bool                           is_res_info_updated;
 };
 
 /**

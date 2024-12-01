@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_VFE680_H_
@@ -451,6 +452,9 @@ static struct cam_irq_register_set vfe680_top_irq_reg_set[2] = {
 		.mask_reg_offset   = 0x00000034,
 		.clear_reg_offset  = 0x0000003c,
 		.status_reg_offset = 0x00000044,
+		.set_reg_offset    = 0x0000004C,
+		.test_set_val      = BIT(1),
+		.test_sub_val      = BIT(0),
 	},
 	{
 		.mask_reg_offset   = 0x00000038,
@@ -462,9 +466,10 @@ static struct cam_irq_register_set vfe680_top_irq_reg_set[2] = {
 static struct cam_irq_controller_reg_info vfe680_top_irq_reg_info = {
 	.num_registers = 2,
 	.irq_reg_set = vfe680_top_irq_reg_set,
-	.global_clear_offset  = 0x00000030,
-	.global_clear_bitmask = 0x00000001,
-	.clear_all_bitmask = 0xFFFFFFFF,
+	.global_irq_cmd_offset = 0x00000030,
+	.global_clear_bitmask  = 0x00000001,
+	.global_set_bitmask    = 0x00000010,
+	.clear_all_bitmask     = 0xFFFFFFFF,
 };
 
 static struct cam_vfe_top_ver4_reg_offset_common vfe680_top_common_reg = {
@@ -503,6 +508,25 @@ static struct cam_vfe_top_ver4_reg_offset_common vfe680_top_common_reg = {
 	.epoch_height_cfg         = 0x0000009C,
 	.bus_violation_status     = 0x00000C64,
 	.bus_overflow_status      = 0x00000C68,
+	.num_perf_counters        = 2,
+	.perf_count_reg = {
+		{
+			.perf_count_cfg    = 0x00000100,
+			.perf_pix_count    = 0x00000104,
+			.perf_line_count   = 0x00000108,
+			.perf_stall_count  = 0x0000010C,
+			.perf_always_count = 0x00000110,
+			.perf_count_status = 0x00000114,
+		},
+		{
+			.perf_count_cfg    = 0x00000118,
+			.perf_pix_count    = 0x0000011C,
+			.perf_line_count   = 0x00000120,
+			.perf_stall_count  = 0x00000124,
+			.perf_always_count = 0x00000128,
+			.perf_count_status = 0x0000012C,
+		},
+	},
 	.top_debug_cfg            = 0x000000FC,
 	.num_top_debug_reg        = CAM_VFE_680_NUM_DBG_REG,
 	.top_debug = {
@@ -885,7 +909,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 		.irq_reg_info = {
 			.num_registers            = 2,
 			.irq_reg_set              = vfe680_bus_irq_reg,
-			.global_clear_offset      = 0x00000C30,
+			.global_irq_cmd_offset    = 0x00000C30,
 			.global_clear_bitmask     = 0x00000001,
 		},
 	},
@@ -2213,7 +2237,12 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 	},
 	.num_comp_grp          = 17,
 	.support_consumed_addr = true,
-	.comp_done_shift       = 0,
+	.comp_done_mask = {
+		BIT(0), BIT(1), BIT(2), BIT(3),
+		BIT(4), BIT(5), BIT(6), BIT(7),
+		BIT(8), BIT(9), BIT(10), BIT(11),
+		BIT(12), BIT(13), BIT(14), BIT(15), BIT(16),
+	},
 	.top_irq_shift         = 0,
 	.max_out_res           = CAM_ISP_IFE_OUT_RES_BASE + 33,
 	.pack_align_shift      = 5,

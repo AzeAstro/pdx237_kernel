@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_SOC_UTIL_H_
@@ -31,7 +31,7 @@
 #define INIT_RATE    -2
 
 /* maximum number of device block */
-#define CAM_SOC_MAX_BLOCK           7
+#define CAM_SOC_MAX_BLOCK           8
 
 /* maximum number of device base */
 #define CAM_SOC_MAX_BASE            CAM_SOC_MAX_BLOCK
@@ -795,5 +795,17 @@ int cam_soc_util_print_clk_freq(struct cam_hw_soc_info *soc_info);
  */
 int cam_soc_util_select_pinctrl_state(
 	struct cam_hw_soc_info *soc_info, int idx, bool active);
+
+/**
+ * cam_soc_util_print_clk_freq()
+ *
+ * @brief:              This function checks whether regulators of this device are enabled at this
+ *                      time.
+ *
+ * @soc_info:           Device soc struct to be populated
+ *
+ * @return:             Number of regulators enabled
+ */
+int cam_soc_util_regulators_enabled(struct cam_hw_soc_info *soc_info);
 
 #endif /* _CAM_SOC_UTIL_H_ */

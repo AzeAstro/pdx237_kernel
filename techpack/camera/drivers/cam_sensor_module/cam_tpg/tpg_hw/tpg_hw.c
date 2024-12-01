@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "tpg_hw.h"
@@ -80,6 +81,8 @@ static const char * const tpg_interleaving_format_string[] = {
 	"TPG_INTERLEAVING_FORMAT_INVALID",
 	"TPG_INTERLEAVING_FORMAT_FRAME",
 	"TPG_INTERLEAVING_FORMAT_LINE",
+	"TPG_INTERLEAVING_FORMAT_SHDR",
+	"TPG_INTERLEAVING_FORMAT_SparsePD",
 	"TPG_INTERLEAVING_FORMAT_MAX"
 };
 
@@ -359,6 +362,7 @@ int tpg_hw_dump_status(struct tpg_hw *hw)
 	case TPG_HW_VERSION_1_3:
 		if (hw->hw_info->ops->dump_status)
 			hw->hw_info->ops->dump_status(hw, NULL);
+		break;
 	default:
 		CAM_WARN(CAM_TPG, "Hw version doesn't support status dump");
 		break;
@@ -475,31 +479,34 @@ int tpg_hw_release(struct tpg_hw *hw)
 enum cam_vote_level get_tpg_clk_level(
 		struct tpg_hw *hw)
 {
-	enum cam_vote_level cam_vote_level_index = 0;
-	enum cam_vote_level last_valid_vote      = 0;
-	uint64_t clk                             = 0;
-	struct cam_hw_soc_info *soc_info         = NULL;
+	uint32_t cam_vote_level = 0;
+	uint32_t last_valid_vote = 0;
+	uint64_t clk = 0;
+	struct cam_hw_soc_info *soc_info;
+
+	if (!hw || !hw->soc_info)
+		return -EINVAL;
 
 	soc_info = hw->soc_info;
 	clk = hw->global_config.tpg_clock;
 
-	for (cam_vote_level_index = 0;
-			cam_vote_level_index < CAM_MAX_VOTE; cam_vote_level_index++) {
-		if (soc_info->clk_level_valid[cam_vote_level_index] != true)
+	for (cam_vote_level = 0;
+			cam_vote_level < CAM_MAX_VOTE; cam_vote_level++) {
+		if (soc_info->clk_level_valid[cam_vote_level] != true)
 			continue;
 
-		if (soc_info->clk_rate[cam_vote_level_index]
+		if (soc_info->clk_rate[cam_vote_level]
 			[soc_info->src_clk_idx] >= clk) {
 			CAM_INFO(CAM_TPG,
 				"match detected %s : %llu:%d level : %d",
 				soc_info->clk_name[soc_info->src_clk_idx],
 				clk,
-				soc_info->clk_rate[cam_vote_level_index]
+				soc_info->clk_rate[cam_vote_level]
 				[soc_info->src_clk_idx],
-				cam_vote_level_index);
-			return cam_vote_level_index;
+				cam_vote_level);
+			return cam_vote_level;
 		}
-		last_valid_vote = cam_vote_level_index;
+		last_valid_vote = cam_vote_level;
 	}
 	return last_valid_vote;
 }
@@ -509,7 +516,7 @@ static int tpg_hw_configure_init_settings(
 		struct tpg_hw_initsettings *settings)
 {
 	int rc = 0;
-	enum cam_vote_level clk_level = 0;
+	int clk_level = 0;
 
 	if (!hw || !hw->hw_info || !hw->hw_info->ops)
 		return -EINVAL;
@@ -519,14 +526,10 @@ static int tpg_hw_configure_init_settings(
 	case TPG_HW_VERSION_1_1:
 	case TPG_HW_VERSION_1_2:
 	case TPG_HW_VERSION_1_3:
-		if (!hw->soc_info)
-			rc = -EINVAL;
-		else {
-			clk_level = get_tpg_clk_level(hw);
-			rc = tpg_hw_soc_enable(hw, clk_level);
-			if (hw->hw_info->ops->init)
-				rc = hw->hw_info->ops->init(hw, settings);
-		}
+		clk_level = get_tpg_clk_level(hw);
+		rc = tpg_hw_soc_enable(hw, clk_level);
+		if (hw->hw_info->ops->init)
+			rc = hw->hw_info->ops->init(hw, settings);
 		break;
 	default:
 		CAM_ERR(CAM_TPG, "TPG[%d] Unsupported HW Version",
@@ -681,12 +684,15 @@ int tpg_hw_reset(struct tpg_hw *hw)
 
 	/* disable the hw */
 	mutex_lock(&hw->mutex);
-	if ((hw->state != TPG_HW_STATE_HW_DISABLED) &&
-			cam_cpas_stop(hw->cpas_handle)) {
-		CAM_ERR(CAM_TPG, "TPG[%d] CPAS stop failed",
-				hw->hw_idx);
-		rc = -EINVAL;
-	} else {
+	if (hw->state != TPG_HW_STATE_HW_DISABLED) {
+		rc = cam_soc_util_disable_platform_resource(hw->soc_info, true, false);
+		if (rc)
+			CAM_ERR(CAM_TPG, "TPG[%d] Disable platform failed %d", hw->hw_idx, rc);
+
+		rc = cam_cpas_stop(hw->cpas_handle);
+		if (rc)
+			CAM_ERR(CAM_TPG, "TPG[%d] CPAS stop failed", hw->hw_idx);
+
 		hw->state = TPG_HW_STATE_HW_DISABLED;
 	}
 	mutex_unlock(&hw->mutex);

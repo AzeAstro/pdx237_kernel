@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_CPASTOP_HW_H_
@@ -315,10 +315,12 @@ struct cam_cpas_subpart_info {
  *         camnoc slave pending transactions before turning off CPAS_TOP gdsc
  * @tcsr_camera_hf_sf_ares_glitch: Errata workaround info from ignoring
  *         erroneous signals at camera start
+ * @enable_icp_clk_for_qchannel: Need to enable ICP clk while qchannel handshake
  */
 struct cam_cpas_hw_errata_wa_list {
 	struct cam_cpas_hw_errata_wa camnoc_flush_slave_pending_trans;
 	struct cam_cpas_hw_errata_wa tcsr_camera_hf_sf_ares_glitch;
+	struct cam_cpas_hw_errata_wa enable_icp_clk_for_qchannel;
 };
 
 /**
@@ -350,6 +352,18 @@ struct cam_camnoc_err_logger_info {
 };
 
 /**
+ * struct cam_cpas_test_irq_info : CAMNOC Test IRQ mask information
+ *
+ * @sbm_enable_mask: sbm mask to enable camnoc test irq
+ * @sbm_clear_mask: sbm mask to clear camnoc test irq
+ *
+ */
+struct cam_cpas_test_irq_info {
+	uint32_t sbm_enable_mask;
+	uint32_t sbm_clear_mask;
+};
+
+/**
  * struct cam_camnoc_info : Overall CAMNOC settings info
  *
  * @specific: Pointer to CAMNOC SPECIFICTONTTPTR settings
@@ -359,6 +373,8 @@ struct cam_camnoc_err_logger_info {
  * @irq_err_size: Array size of IRQ Error settings
  * @err_logger: Pointer to CAMNOC IRQ Error logger read registers
  * @errata_wa_list: HW Errata workaround info
+ * @cam_subpart_info: camera parts fuse description
+ * @test_irq_info: CAMNOC Test IRQ info
  *
  */
 struct cam_camnoc_info {
@@ -369,6 +385,8 @@ struct cam_camnoc_info {
 	int irq_err_size;
 	struct cam_camnoc_err_logger_info *err_logger;
 	struct cam_cpas_hw_errata_wa_list *errata_wa_list;
+	struct cam_cpas_subpart_info *cam_subpart_info;
+	struct cam_cpas_test_irq_info test_irq_info;
 };
 
 /**
