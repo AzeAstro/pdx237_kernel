@@ -1,8 +1,13 @@
 AUDIO_ROOT := $(srctree)/techpack/audio
 
-ifeq ($(CONFIG_ARCH_PARROT), y)
+ifeq ($(CONFIG_ARCH_WAIPIO), y)
 include $(AUDIO_ROOT)/config/waipioauto.conf
 LINUXINCLUDE += -include $(AUDIO_ROOT)/config/waipioautoconf.h
+endif
+
+ifeq ($(CONFIG_ARCH_KALAMA), y)
+include $(AUDIO_ROOT)/config/kalamaauto.conf
+LINUXINCLUDE += -include $(AUDIO_ROOT)/config/kalamaautoconf.h
 endif
 
 LINUXINCLUDE += \

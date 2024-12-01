@@ -1,4 +1,5 @@
 /* Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +24,6 @@
 #include <dsp/spf-core.h>
 #include <dsp/digital-cdc-rsc-mgr.h>
 
-#define APM_STATE_READY_TIMEOUT_MS    10000
 #define Q6_READY_TIMEOUT_MS 1000
 #define Q6_CLOSE_ALL_TIMEOUT_MS 5000
 #define APM_CMD_GET_SPF_STATE 0x01001021
@@ -31,6 +31,7 @@
 #define APM_CMD_RSP_GET_SPF_STATE 0x02001007
 #define APM_MODULE_INSTANCE_ID   0x00000001
 #define GPR_SVC_ADSP_CORE 0x3
+#define ADD_CHILD_DEVICES_APM_TIMEOUT_MS 5000
 
 struct spf_core {
 	struct gpr_device *adev;
@@ -76,18 +77,18 @@ static int spf_core_callback(struct gpr_device *adev, void *data)
 	struct gpr_hdr *hdr = data;
 
 
-	dev_info(&adev->dev ,"%s: Payload %x",__func__, hdr->opcode);
+	dev_info_ratelimited(&adev->dev, "%s: Payload %x", __func__, hdr->opcode);
 	switch (hdr->opcode) {
 	case GPR_IBASIC_RSP_RESULT:
 		basic_rsp = GPR_PKT_GET_PAYLOAD(
 				struct spf_cmd_basic_rsp,
 				data);
-		dev_info(&adev->dev ,"%s: op %x status %d", __func__,
+		dev_info_ratelimited(&adev->dev, "%s: op %x status %d", __func__,
 				basic_rsp->opcode, basic_rsp->status);
 		if (basic_rsp->opcode == APM_CMD_CLOSE_ALL) {
 			core->status = basic_rsp->status;
 		} else {
-			dev_err(&adev->dev ,"%s: Failed response received",
+			dev_err_ratelimited(&adev->dev, "%s: Failed response received",
 					__func__);
 		}
 		core->resp_received = true;
@@ -97,12 +98,12 @@ static int spf_core_callback(struct gpr_device *adev, void *data)
 				GPR_PKT_GET_PAYLOAD(
 					struct apm_cmd_rsp_get_spf_status_t,
 					data);
-		dev_info(&adev->dev ,"%s: sucess response received",__func__);
+		dev_info_ratelimited(&adev->dev, "%s: sucess response received", __func__);
 		core->status = spf_status_rsp->status;
 		core->resp_received = true;
 		break;
 	default:
-		dev_err(&adev->dev, "Message ID from apm: 0x%x\n",
+		dev_err_ratelimited(&adev->dev, "Message ID from apm: 0x%x\n",
 			hdr->opcode);
 		break;
 	}
@@ -129,7 +130,7 @@ static bool __spf_core_is_apm_ready(struct spf_core *core)
 	pkt.hdr.src_domain_id = GPR_IDS_DOMAIN_ID_APPS_V;
 	pkt.hdr.opcode = APM_CMD_GET_SPF_STATE;
 
-	dev_err(spf_core_priv->dev, "%s: send_command ret\n",	__func__);
+	dev_err_ratelimited(spf_core_priv->dev, "%s: send_command ret\n", __func__);
 
 	rc = gpr_send_pkt(adev, &pkt);
 	if (rc < 0) {
@@ -144,7 +145,7 @@ static bool __spf_core_is_apm_ready(struct spf_core *core)
 	if (rc > 0 && core->resp_received) {
 		ret = core->status;
 	} else {
-		dev_err(spf_core_priv->dev, "%s: command timedout, ret\n",
+		dev_err_ratelimited(spf_core_priv->dev, "%s: command timedout, ret\n",
 			__func__);
         }
 done:
@@ -157,7 +158,7 @@ done:
  *
  * Return: Will return true if apm is ready and false if not.
  */
-bool spf_core_is_apm_ready(void)
+bool spf_core_is_apm_ready(int timeout_ms)
 {
 	unsigned long  timeout;
 	bool ret = false;
@@ -171,13 +172,20 @@ bool spf_core_is_apm_ready(void)
 	if (!core)
 		goto done;
 
-	timeout = jiffies + msecs_to_jiffies(APM_STATE_READY_TIMEOUT_MS);
+	timeout = jiffies + msecs_to_jiffies(timeout_ms);
 	mutex_lock(&core->lock);
+
+	/* sleep for 100ms before querying AVS up */
+	msleep(100);
+
 	for (;;) {
 		if (__spf_core_is_apm_ready(core)) {
 			ret = true;
 			break;
 		}
+		if (!timeout_ms)
+			break;
+
 		usleep_range(50000, 50050);
 		if (!time_after(timeout, jiffies)) {
 			ret = false;
@@ -230,11 +238,11 @@ void spf_core_apm_close_all(void)
 	pkt.hdr.src_domain_id = GPR_IDS_DOMAIN_ID_APPS_V;
 	pkt.hdr.opcode = APM_CMD_CLOSE_ALL;
 
-	dev_info(spf_core_priv->dev, "%s: send_command \n", __func__);
+	dev_info_ratelimited(spf_core_priv->dev, "%s: send_command \n", __func__);
 
 	rc = gpr_send_pkt(adev, &pkt);
 	if (rc < 0) {
-		dev_err(spf_core_priv->dev, "%s: send_pkt_failed %d\n",
+		dev_err_ratelimited(spf_core_priv->dev, "%s: send_pkt_failed %d\n",
 				__func__, rc);
 		goto done;
 	}
@@ -253,13 +261,13 @@ void spf_core_apm_close_all(void)
 	*/
 	rc = wait_event_timeout(core->wait, (core->resp_received),
 				msecs_to_jiffies(Q6_CLOSE_ALL_TIMEOUT_MS));
-	dev_info(spf_core_priv->dev, "%s: wait event unblocked \n", __func__);
+	dev_info_ratelimited(spf_core_priv->dev, "%s: wait event unblocked \n", __func__);
 	if (rc > 0 && core->resp_received) {
 		if (core->status != 0)
-			dev_err(spf_core_priv->dev, "%s, cmd failed status %d",
+			dev_err_ratelimited(spf_core_priv->dev, "%s, cmd failed status %d",
 					__func__, core->status);
 	} else {
-		dev_err(spf_core_priv->dev, "%s: command timedout, ret\n",
+		dev_err_ratelimited(spf_core_priv->dev, "%s: command timedout, ret\n",
 			__func__);
         }
 
@@ -335,7 +343,7 @@ static void spf_core_add_child_devices(struct work_struct *work)
 	int ret;
         pr_err("%s:enumarate machine driver\n", __func__);
 
-	if(spf_core_is_apm_ready()) {
+	if (spf_core_is_apm_ready(ADD_CHILD_DEVICES_APM_TIMEOUT_MS)) {
 		dev_err(spf_core_priv->dev, "%s: apm is up\n",
 			__func__);
 	} else {
